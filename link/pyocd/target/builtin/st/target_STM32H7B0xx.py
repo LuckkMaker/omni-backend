@@ -16,10 +16,10 @@
 # limitations under the License.
 
 import time
-from ...coresight.coresight_target import CoreSightTarget
-from ...core.memory_map import (FlashRegion, RamRegion, MemoryMap)
-from ...coresight.cortex_m import CortexM
-from ...coresight.minimal_mem_ap import MinimalMemAP as MiniAP
+from ....coresight.coresight_target import CoreSightTarget
+from ....core.memory_map import (FlashRegion, RamRegion, MemoryMap)
+from ....coresight.cortex_m import CortexM
+from ....coresight.minimal_mem_ap import MinimalMemAP as MiniAP
 
 
 class DBGMCU:

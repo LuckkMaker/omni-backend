@@ -15,9 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ...coresight.coresight_target import CoreSightTarget
-from ...core.memory_map import (FlashRegion, RamRegion, MemoryMap)
-from ...debug.svd.loader import SVDFile
+from ....coresight.coresight_target import CoreSightTarget
+from ....core.memory_map import (FlashRegion, RamRegion, MemoryMap)
+from ....debug.svd.loader import SVDFile
 
 class DBGMCU:
     # en.DM00108282.pdf (STM32L0x1 Reference manual)

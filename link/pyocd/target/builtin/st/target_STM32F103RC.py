@@ -15,9 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ...coresight.coresight_target import CoreSightTarget
-from ...core.memory_map import (FlashRegion, RamRegion, MemoryMap)
-from ...debug.svd.loader import SVDFile
+from ....coresight.coresight_target import CoreSightTarget
+from ....core.memory_map import (FlashRegion, RamRegion, MemoryMap)
+from ....debug.svd.loader import SVDFile
 
 DBGMCU_CR = 0xE0042004
 #0111 1110 0011 1111 1111 1111 0000 0000

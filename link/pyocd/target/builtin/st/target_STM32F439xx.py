@@ -15,9 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ...coresight.coresight_target import CoreSightTarget
-from ...core.memory_map import (FlashRegion, RamRegion, MemoryMap)
-from ...debug.svd.loader import SVDFile
+from ....coresight.coresight_target import CoreSightTarget
+from ....core.memory_map import (FlashRegion, RamRegion, MemoryMap)
+from ....debug.svd.loader import SVDFile
 
 # Chip erase takes a really long time.
 CHIP_ERASE_WEIGHT = 15.0
@@ -63,7 +63,7 @@ FLASH_ALGO = { 'load_address' : 0x20000000,
     'analyzer_address' : 0x20002000
   }
 
-class STM32F429xG(CoreSightTarget):
+class STM32F439xG(CoreSightTarget):
 
     VENDOR = "STMicroelectronics"
 
@@ -77,7 +77,7 @@ class STM32F429xG(CoreSightTarget):
                                                         page_size=0x1000,
                                                         erase_all_weight=CHIP_ERASE_WEIGHT,
                                                         algo=FLASH_ALGO),
-        FlashRegion( start=0x08020000, length=0xe0000,  sector_size=0x20000,
+        FlashRegion( start=0x08020000, length=0x60000,  sector_size=0x20000,
                                                         page_size=0x1000,
                                                         erase_all_weight=CHIP_ERASE_WEIGHT,
                                                         algo=FLASH_ALGO),
@@ -85,15 +85,15 @@ class STM32F429xG(CoreSightTarget):
         )
 
     def __init__(self, session):
-        super(STM32F429xG, self).__init__(session, self.MEMORY_MAP)
-        self._svd_location = SVDFile.from_builtin("STM32F429x.svd")
+        super(STM32F439xG, self).__init__(session, self.MEMORY_MAP)
+        self._svd_location = SVDFile.from_builtin("STM32F439x.svd")
 
     def post_connect_hook(self):
         self.write32(DBGMCU.CR, DBGMCU.CR_VALUE)
         self.write32(DBGMCU.APB1_FZ, DBGMCU.APB1_FZ_VALUE)
         self.write32(DBGMCU.APB2_FZ, DBGMCU.APB2_FZ_VALUE)
 
-class STM32F429xI(CoreSightTarget):
+class STM32F439xI(CoreSightTarget):
 
     VENDOR = "STMicroelectronics"
 
@@ -127,8 +127,8 @@ class STM32F429xI(CoreSightTarget):
         )
 
     def __init__(self, session):
-        super(STM32F429xI, self).__init__(session, self.MEMORY_MAP)
-        self._svd_location = SVDFile.from_builtin("STM32F429x.svd")
+        super(STM32F439xI, self).__init__(session, self.MEMORY_MAP)
+        self._svd_location = SVDFile.from_builtin("STM32F439x.svd")
 
     def post_connect_hook(self):
         self.write32(DBGMCU.CR, DBGMCU.CR_VALUE)

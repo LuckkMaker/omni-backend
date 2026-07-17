@@ -5,9 +5,9 @@
 # Flash algorithm generated from STM32F4xx_1024.FLM using generate_flash_algo.py.
 # STM32F407IG: 1MB Flash, 192KB RAM (128KB SRAM + 64KB CCM).
 
-from ...coresight.coresight_target import CoreSightTarget
-from ...core.memory_map import (FlashRegion, RamRegion, MemoryMap)
-from ...debug.svd.loader import SVDFile
+from ....coresight.coresight_target import CoreSightTarget
+from ....core.memory_map import (FlashRegion, RamRegion, MemoryMap)
+from ....debug.svd.loader import SVDFile
 
 CHIP_ERASE_WEIGHT = 15.0
 
