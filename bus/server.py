@@ -18,6 +18,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from api import system
 from api import serial
+from api import modbus
 from core.events import event_manager
 
 # 后端版本号（与前端 package.json 保持一致）
@@ -53,6 +54,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(system.router, prefix="/api", tags=["system"])
 app.include_router(serial.router, prefix="/api/serial", tags=["serial"])
+app.include_router(modbus.router, prefix="/api/modbus", tags=["modbus"])
 
 
 # WebSocket 端点
