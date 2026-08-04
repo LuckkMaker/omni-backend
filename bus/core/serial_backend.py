@@ -98,6 +98,8 @@ class SerialBackend:
             parity = str(config.get("parity", "N")).upper()
             stopbits = float(config.get("stopbits", 1))
             flow_control = str(config.get("flow_control", "none")).lower()
+            rts = bool(config.get("rts", False))
+            dtr = bool(config.get("dtr", False))
 
             # 参数校验
             if bytesize not in _VALID_BYTESIZE:
@@ -128,6 +130,11 @@ class SerialBackend:
                     rtscts=rtscts,
                     timeout=0,  # 非阻塞读
                 )
+                # rts/dtr 不是 Serial 构造参数，需在打开后作为属性设置
+                # rtscts 模式下 RTS 由硬件流控接管，忽略用户设置
+                if not rtscts:
+                    self._serial.rts = rts
+                self._serial.dtr = dtr
                 # 清空输入缓冲区，避免残留数据
                 self._serial.reset_input_buffer()
             except SerialException as e:

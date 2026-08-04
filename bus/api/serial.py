@@ -28,6 +28,8 @@ class SerialOpenRequest(BaseModel):
     parity: str = Field("N", description="校验位 (N/E/O/M/S)")
     stopbits: float = Field(1, description="停止位 (1/1.5/2)")
     flow_control: str = Field("none", description="流控 (none/xonxoff/rtscts)")
+    rts: bool = Field(False, description="RTS 信号")
+    dtr: bool = Field(False, description="DTR 信号")
 
 
 class SerialSendRequest(BaseModel):
@@ -54,6 +56,8 @@ async def open_serial(req: SerialOpenRequest):
         "parity": req.parity,
         "stopbits": req.stopbits,
         "flow_control": req.flow_control,
+        "rts": req.rts,
+        "dtr": req.dtr,
     }
     return serial_backend.open(config)
 
