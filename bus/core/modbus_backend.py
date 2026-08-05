@@ -89,7 +89,7 @@ class ModbusBackend:
             timeout     - 响应超时 (s)
         """
         with self._lock:
-            if self.is_connected():
+            if self.is_connected:
                 self._disconnect_internal()
 
             port = config.get("port")
@@ -171,7 +171,7 @@ class ModbusBackend:
 
         返回: {success, data?: [值], error?}
         """
-        if not self.is_connected():
+        if not self.is_connected:
             return {"success": False, "error": "未连接从站"}
         if type_ not in REGISTER_TYPES:
             return {"success": False, "error": f"未知寄存器类型: {type_}"}
@@ -214,7 +214,7 @@ class ModbusBackend:
 
         返回: {success, error?}
         """
-        if not self.is_connected():
+        if not self.is_connected:
             return {"success": False, "error": "未连接从站"}
         if type_ not in ("holding", "coil"):
             return {"success": False, "error": f"仅支持写入 holding / coil，收到 {type_}"}
@@ -258,7 +258,7 @@ class ModbusBackend:
             count: 数量
             interval: 轮询间隔 (ms)
         """
-        if not self.is_connected():
+        if not self.is_connected:
             return {"success": False, "error": "未连接从站"}
         if self._poll_thread is not None and self._poll_thread.is_alive():
             return {"success": False, "error": "轮询已在运行"}
@@ -329,7 +329,7 @@ class ModbusBackend:
 
     def _do_read(self, type_: str, address: int, count: int) -> list | None:
         """轮询读取，仅返回值列表（不额外推送 modbus.data，避免与 polling 重复）"""
-        if not self.is_connected():
+        if not self.is_connected:
             return None
         try:
             if type_ in ("holding", "input"):

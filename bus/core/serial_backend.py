@@ -2,10 +2,11 @@
 
 基于 pyserial 实现串口管理，支持端口枚举、收发数据、
 后台线程接收并通过 event_manager 推送到前端。
+支持多个串口实例（多 Tab 同时调试不同设备），每个实例用 connection_id 标识。
 
 事件推送:
-  - serial.data (JSON):   {direction, data(hex), timestamp}
-  - serial.status (JSON):  {connected, port?, error?}
+  - serial.data (JSON):   {connection_id, direction, data(hex), timestamp}
+  - serial.status (JSON):  {connection_id, connected, port?, error?}
   - log (JSON):            日志事件（串口打开/关闭/错误等）
   - Binary 帧:             高频数据通道 (data_type=0 = serial_rx)
 """
@@ -35,7 +36,8 @@ class SerialBackend:
     通过 event_manager 推送到前端。
     """
 
-    def __init__(self, event_manager):
+    def __init__(self, event_manager, connection_id: str = "default"):
+        self.connection_id = connection_id
         self._serial: serial.Serial | None = None
         self._read_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -165,6 +167,7 @@ class SerialBackend:
                 f"({bytesize}{parity}{stopbits}, flow={flow_control})",
             )
             self._event_manager.emit("serial.status", {
+                "connection_id": self.connection_id,
                 "connected": True,
                 "port": port,
             })
@@ -198,6 +201,7 @@ class SerialBackend:
 
             # 推送发送数据事件
             self._event_manager.emit("serial.data", {
+                "connection_id": self.connection_id,
                 "direction": "tx",
                 "data": data.hex().upper(),
                 "timestamp": datetime.now().isoformat(timespec="milliseconds"),
@@ -218,6 +222,7 @@ class SerialBackend:
         """获取串口状态"""
         if self.is_open() and self._serial is not None:
             return {
+                "connection_id": self.connection_id,
                 "connected": True,
                 "port": self._serial.port,
                 "baudrate": self._serial.baudrate,
@@ -225,7 +230,7 @@ class SerialBackend:
                 "parity": self._serial.parity,
                 "stopbits": self._serial.stopbits,
             }
-        return {"connected": False}
+        return {"connection_id": self.connection_id, "connected": False}
 
     @staticmethod
     def parse_hex(hex_str: str) -> bytes:
@@ -264,6 +269,7 @@ class SerialBackend:
         self._event_manager.log(
             "info", f"Serial 已关闭: {port_name or 'unknown'}")
         self._event_manager.emit("serial.status", {
+            "connection_id": self.connection_id,
             "connected": False,
             "port": port_name,
         })
@@ -293,6 +299,7 @@ class SerialBackend:
 
                         # JSON 事件（低频控制通道）
                         self._event_manager.emit("serial.data", {
+                            "connection_id": self.connection_id,
                             "direction": "rx",
                             "data": hex_str,
                             "timestamp": timestamp,
@@ -309,6 +316,7 @@ class SerialBackend:
                     f"Serial 接收异常（端口可能已断开）: {e}",
                 )
                 self._event_manager.emit("serial.status", {
+                    "connection_id": self.connection_id,
                     "connected": False,
                     "error": str(e),
                 })
@@ -318,3 +326,68 @@ class SerialBackend:
                 break
 
         logger.info("Serial read thread stopped")
+
+
+class SerialManager:
+    """串口多实例管理器
+
+    维护 connection_id -> SerialBackend 的映射，支持多个串口
+    同时打开（每个 Tab 对应一个独立串口实例）。
+    """
+
+    def __init__(self, event_manager):
+        self._event_manager = event_manager
+        self._backends: dict[str, SerialBackend] = {}
+        self._lock = threading.Lock()
+
+    def _get(self, connection_id: str) -> SerialBackend:
+        """获取或创建指定 connection_id 的后端实例"""
+        with self._lock:
+            backend = self._backends.get(connection_id)
+            if backend is None:
+                backend = SerialBackend(self._event_manager, connection_id)
+                self._backends[connection_id] = backend
+            return backend
+
+    def list_ports(self) -> list[dict]:
+        """枚举可用串口"""
+        return SerialBackend(self._event_manager).list_ports()
+
+    def open(self, connection_id: str, config: dict) -> dict:
+        """打开指定串口实例"""
+        return self._get(connection_id).open(config)
+
+    def close(self, connection_id: str) -> dict:
+        """关闭指定串口实例"""
+        with self._lock:
+            backend = self._backends.get(connection_id)
+            if backend is None:
+                return {"success": True}
+            self._backends.pop(connection_id, None)
+        return backend.close()
+
+    def send(self, connection_id: str, data: bytes) -> dict:
+        """向指定串口实例发送数据"""
+        return self._get(connection_id).send(data)
+
+    def get_status(self, connection_id: str) -> dict:
+        """获取指定串口实例状态"""
+        with self._lock:
+            backend = self._backends.get(connection_id)
+        if backend is None:
+            return {"connection_id": connection_id, "connected": False}
+        return backend.get_status()
+
+    def get_all_status(self) -> list[dict]:
+        """获取所有串口实例状态"""
+        with self._lock:
+            backends = list(self._backends.values())
+        return [b.get_status() for b in backends]
+
+    def close_all(self) -> None:
+        """关闭所有串口实例（应用退出时调用）"""
+        with self._lock:
+            backends = list(self._backends.items())
+            self._backends.clear()
+        for _, backend in backends:
+            backend.close()
