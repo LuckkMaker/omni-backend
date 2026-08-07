@@ -167,7 +167,7 @@ class SerialBackend:
                 f"({bytesize}{parity}{stopbits}, flow={flow_control})",
             )
             self._event_manager.emit("serial.status", {
-                "connection_id": self.connection_id,
+                "connectionId": self.connection_id,
                 "connected": True,
                 "port": port,
             })
@@ -201,7 +201,7 @@ class SerialBackend:
 
             # 推送发送数据事件
             self._event_manager.emit("serial.data", {
-                "connection_id": self.connection_id,
+                "connectionId": self.connection_id,
                 "direction": "tx",
                 "data": data.hex().upper(),
                 "timestamp": datetime.now().isoformat(timespec="milliseconds"),
@@ -269,7 +269,7 @@ class SerialBackend:
         self._event_manager.log(
             "info", f"Serial 已关闭: {port_name or 'unknown'}")
         self._event_manager.emit("serial.status", {
-            "connection_id": self.connection_id,
+            "connectionId": self.connection_id,
             "connected": False,
             "port": port_name,
         })
@@ -299,7 +299,7 @@ class SerialBackend:
 
                         # JSON 事件（低频控制通道）
                         self._event_manager.emit("serial.data", {
-                            "connection_id": self.connection_id,
+                            "connectionId": self.connection_id,
                             "direction": "rx",
                             "data": hex_str,
                             "timestamp": timestamp,
@@ -316,7 +316,7 @@ class SerialBackend:
                     f"Serial 接收异常（端口可能已断开）: {e}",
                 )
                 self._event_manager.emit("serial.status", {
-                    "connection_id": self.connection_id,
+                    "connectionId": self.connection_id,
                     "connected": False,
                     "error": str(e),
                 })
