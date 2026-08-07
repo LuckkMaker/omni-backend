@@ -45,6 +45,17 @@ class SerialCloseRequest(BaseModel):
     connection_id: str = Field(..., description="连接实例 ID（对应前端 Tab）")
 
 
+class SerialRecordStartRequest(BaseModel):
+    """开始接收录制请求"""
+    connection_id: str = Field(..., description="连接实例 ID（对应前端 Tab）")
+    path: str = Field(..., description="录制文件保存路径（.dat）")
+
+
+class SerialRecordStopRequest(BaseModel):
+    """停止接收录制请求"""
+    connection_id: str = Field(..., description="连接实例 ID（对应前端 Tab）")
+
+
 # ── 路由 ──────────────────────────────────────────────────
 
 @router.get("/ports")
@@ -85,6 +96,18 @@ async def send_data(req: SerialSendRequest):
         return {"success": False, "error": f"无效的 hex 字符串: {e}"}
 
     return serial_manager.send(req.connection_id, data)
+
+
+@router.post("/record/start")
+async def start_record(req: SerialRecordStartRequest):
+    """开始录制接收数据到文件（后端落盘）"""
+    return serial_manager.start_record(req.connection_id, req.path)
+
+
+@router.post("/record/stop")
+async def stop_record(req: SerialRecordStopRequest):
+    """停止录制接收数据"""
+    return serial_manager.stop_record(req.connection_id)
 
 
 @router.get("/status")
