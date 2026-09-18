@@ -175,6 +175,15 @@ class TcpServerBackend:
             "addr": addr_str,
             "action": "connect",
         })
+        # 连接建立也作为报文字段呈现（kind=connect 伪报文，无载荷）
+        self._event_manager.emit("network.data", {
+            "clientId": client_id,
+            "addr": addr_str,
+            "direction": "rx",
+            "data": "",
+            "timestamp": _now(),
+            "kind": "connect",
+        })
         self._event_manager.log(
             "info", f"Network 客户端接入 [{client_id}] {addr_str}")
         self._emit_status()
@@ -217,6 +226,15 @@ class TcpServerBackend:
             "clientId": client_id,
             "addr": client["addr"],
             "action": "disconnect",
+        })
+        # 连接断开也作为报文字段呈现（kind=disconnect 伪报文，无载荷）
+        self._event_manager.emit("network.data", {
+            "clientId": client_id,
+            "addr": client["addr"],
+            "direction": "tx",
+            "data": "",
+            "timestamp": _now(),
+            "kind": "disconnect",
         })
         self._event_manager.log(
             "info", f"Network 客户端断开 [{client_id}] {client['addr']}")
