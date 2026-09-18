@@ -229,6 +229,40 @@ class SerialBackend:
             self._event_manager.log("error", f"Serial 发送失败: {error_msg}")
             return {"success": False, "error": error_msg}
 
+    def update(self, patch: dict) -> dict:
+        """运行时更新部分串口参数（无需重开端口）
+
+        支持在线调整:
+            baudrate: int  - 波特率
+            rts: bool      - RTS 信号（rtscts 流控下由硬件接管，忽略）
+            dtr: bool      - DTR 信号
+
+        返回: {success: bool, error?: str}
+        """
+        with self._lock:
+            if not self.is_open() or self._serial is None:
+                return {"success": False, "error": "串口未打开"}
+            serial_ = self._serial
+            try:
+                if "baudrate" in patch:
+                    baudrate = int(patch["baudrate"])
+                    if baudrate <= 0:
+                        return {"success": False,
+                                "error": f"无效的波特率: {baudrate}"}
+                    serial_.baudrate = baudrate
+                if "rts" in patch and not serial_.rtscts:
+                    # rtscts 流控下 RTS 由硬件接管，忽略用户设置
+                    serial_.rts = bool(patch["rts"])
+                if "dtr" in patch:
+                    serial_.dtr = bool(patch["dtr"])
+            except (SerialException, ValueError) as e:
+                self._event_manager.log(
+                    "error", f"Serial 参数更新失败: {e}")
+                return {"success": False, "error": str(e)}
+            self._event_manager.log(
+                "info", f"Serial 参数已更新 [{serial_.port}]")
+            return {"success": True}
+
     def get_status(self) -> dict:
         """获取串口状态"""
         if self.is_open() and self._serial is not None:
@@ -467,6 +501,14 @@ class SerialManager:
     def send(self, connection_id: str, data: bytes) -> dict:
         """向指定串口实例发送数据"""
         return self._get(connection_id).send(data)
+
+    def update(self, connection_id: str, patch: dict) -> dict:
+        """运行时更新指定串口实例的参数"""
+        with self._lock:
+            backend = self._backends.get(connection_id)
+        if backend is None:
+            return {"success": False, "error": "串口未打开"}
+        return backend.update(patch)
 
     def start_record(self, connection_id: str, path: str) -> dict:
         """开始录制指定实例的接收数据"""

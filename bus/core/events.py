@@ -45,6 +45,14 @@ class EventManager:
             "data": {"message": "WebSocket connected"}
         }))
 
+        # 推送一条系统日志，保证全局日志区在连接建立后有可见内容
+        await self.emit_async("log", {
+            "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+            "level": "info",
+            "message": "系统: WebSocket 已连接 (OMNI Bus 后端)",
+            "source": "system",
+        })
+
         try:
             while True:
                 # 接收客户端消息（心跳 / 命令）

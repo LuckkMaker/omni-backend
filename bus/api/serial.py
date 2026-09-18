@@ -45,6 +45,14 @@ class SerialCloseRequest(BaseModel):
     connection_id: str = Field(..., description="连接实例 ID（对应前端 Tab）")
 
 
+class SerialUpdateRequest(BaseModel):
+    """运行时更新串口参数请求（连接后在线调整，无需重开端口）"""
+    connection_id: str = Field(..., description="连接实例 ID（对应前端 Tab）")
+    baudrate: int | None = Field(None, description="波特率")
+    rts: bool | None = Field(None, description="RTS 信号（rtscts 流控下忽略）")
+    dtr: bool | None = Field(None, description="DTR 信号")
+
+
 class SerialRecordStartRequest(BaseModel):
     """开始接收录制请求"""
     connection_id: str = Field(..., description="连接实例 ID（对应前端 Tab）")
@@ -85,6 +93,19 @@ async def open_serial(req: SerialOpenRequest):
 async def close_serial(req: SerialCloseRequest):
     """关闭指定串口"""
     return serial_manager.close(req.connection_id)
+
+
+@router.post("/update")
+async def update_serial(req: SerialUpdateRequest):
+    """运行时更新串口参数（连接后在线调整波特率/RTS/DTR）"""
+    patch: dict = {}
+    if req.baudrate is not None:
+        patch["baudrate"] = req.baudrate
+    if req.rts is not None:
+        patch["rts"] = req.rts
+    if req.dtr is not None:
+        patch["dtr"] = req.dtr
+    return serial_manager.update(req.connection_id, patch)
 
 
 @router.post("/send")
