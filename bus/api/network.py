@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 tcp_server = network_backend.TcpServerBackend(event_manager)
+tcp_client = network_backend.TcpClientBackend(event_manager)
 ping = network_backend.PingBackend(event_manager)
 
 
@@ -110,6 +111,43 @@ async def tcp_server_status():
 async def tcp_server_clients():
     """已连接客户端列表"""
     return {"clients": tcp_server.clients()}
+
+
+class TcpClientConnectRequest(BaseModel):
+    host: str = Field(..., description="目标服务器地址")
+    port: int = Field(..., description="目标服务器端口")
+
+
+@router.post("/tcp-client/connect")
+async def tcp_client_connect(req: TcpClientConnectRequest):
+    """连接远端 TCP 服务器"""
+    if not req.host.strip():
+        return {"success": False, "error": "未指定服务器地址"}
+    if not _validate_port(req.port):
+        return {"success": False, "error": f"无效端口: {req.port}（应为 1-65535）"}
+    return await tcp_client.connect(req.host.strip(), req.port)
+
+
+@router.post("/tcp-client/disconnect")
+async def tcp_client_disconnect():
+    """断开 TCP 连接"""
+    return await tcp_client.disconnect()
+
+
+@router.post("/tcp-client/send")
+async def tcp_client_send(req: SendRequest):
+    """发送数据（hex）到远端服务器"""
+    try:
+        data = network_backend.parse_hex(req.data)
+    except ValueError as e:
+        return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await tcp_client.send(data)
+
+
+@router.get("/tcp-client/status")
+async def tcp_client_status():
+    """TCP Client 状态"""
+    return tcp_client.status()
 
 
 @router.post("/ping/start")

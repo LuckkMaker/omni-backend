@@ -526,3 +526,160 @@ class PingBackend:
 
     def status(self) -> dict:
         return {"running": self.running, "host": self._host}
+
+
+class TcpClientBackend:
+    """基于 asyncio 的 TCP Client（单连接，主动连接远端服务器）
+
+    连接/收发事件沿独立命名空间推送（network.tcpclient.*），避免与
+    TCP Server 的 network.* 事件混淆：
+      - network.tcpclient.status (JSON): {running, host, port, rx, tx, connectedAt?}
+      - network.tcpclient.data  (JSON): {direction, data(hex), timestamp, addr, kind?}
+    """
+
+    def __init__(self, event_manager):
+        self._event_manager = event_manager
+        self._reader = None
+        self._writer = None
+        self._host = None
+        self._port = None
+        self._connected = False
+        self._connecting = False
+        self._rx = 0
+        self._tx = 0
+        self._connected_at = None
+        self._recv_task = None
+
+    @property
+    def running(self) -> bool:
+        return self._connected
+
+    async def connect(self, host: str, port: int) -> dict:
+        """连接远端 TCP 服务器"""
+        if self._connected:
+            return {"success": False, "error": "TCP Client 已连接"}
+        if self._connecting:
+            return {"success": False, "error": "正在连接中，请稍候"}
+        self._connecting = True
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+        except OSError as e:
+            self._event_manager.log(
+                "error", f"Network TCP Client 连接失败 [{host}:{port}]: {e}")
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            self._event_manager.log(
+                "error", f"Network TCP Client 连接失败: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            self._connecting = False
+
+        self._reader, self._writer = reader, writer
+        self._host, self._port = host, port
+        self._connected = True
+        self._rx = 0
+        self._tx = 0
+        self._connected_at = _now()
+        addr_str = f"{host}:{port}"
+        self._event_manager.log(
+            "info", f"Network TCP Client 已连接: {host}:{port}")
+        self._event_manager.emit("network.tcpclient.data", {
+            "direction": "rx", "data": "", "timestamp": _now(),
+            "addr": addr_str, "kind": "connect",
+        })
+        self._emit_status()
+        self._recv_task = asyncio.create_task(self._recv_loop())
+        return {"success": True, "host": host, "port": port}
+
+    async def disconnect(self) -> dict:
+        """主动断开连接"""
+        was_connected = self._connected
+        host, port = self._host, self._port
+        self._connected = False
+        self._reader = None
+        writer = self._writer
+        self._writer = None
+        task = self._recv_task
+        self._recv_task = None
+        if task is not None and not task.done():
+            task.cancel()
+        if writer is not None:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+        self._host = self._port = None
+        self._connected_at = None
+        if was_connected:
+            addr_str = f"{host}:{port}"
+            self._event_manager.log(
+                "info", f"Network TCP Client 已断开: {addr_str}")
+            self._event_manager.emit("network.tcpclient.data", {
+                "direction": "tx", "data": "", "timestamp": _now(),
+                "addr": addr_str, "kind": "disconnect",
+            })
+        self._emit_status()
+        return {"success": True}
+
+    async def _recv_loop(self):
+        reader = self._reader
+        addr_str = f"{self._host}:{self._port}"
+        try:
+            while self._connected and reader is not None:
+                data = await reader.read(4096)
+                if not data:
+                    break
+                self._rx += len(data)
+                self._event_manager.emit("network.tcpclient.data", {
+                    "direction": "rx",
+                    "data": data.hex().upper(),
+                    "timestamp": _now(),
+                    "addr": addr_str,
+                })
+        except (ConnectionError, asyncio.IncompleteReadError, asyncio.CancelledError, OSError):
+            pass
+        except Exception as e:
+            logger.debug("tcp client read error: %s", e)
+        finally:
+            if self._connected:
+                await self.disconnect()
+
+    async def send(self, data: bytes) -> dict:
+        """发送数据到远端服务器"""
+        if not self._connected or self._writer is None:
+            return {"success": False, "error": "TCP Client 未连接"}
+        writer = self._writer
+        try:
+            writer.write(data)
+            await writer.drain()
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        self._tx += len(data)
+        self._event_manager.emit("network.tcpclient.data", {
+            "direction": "tx",
+            "data": data.hex().upper(),
+            "timestamp": _now(),
+            "addr": f"{self._host}:{self._port}",
+        })
+        return {"success": True}
+
+    def status(self) -> dict:
+        return {
+            "running": self._connected,
+            "host": self._host,
+            "port": self._port,
+            "rx": self._rx,
+            "tx": self._tx,
+            "connectedAt": self._connected_at,
+        }
+
+    def _emit_status(self):
+        self._event_manager.emit("network.tcpclient.status", {
+            "running": self._connected,
+            "host": self._host,
+            "port": self._port,
+            "rx": self._rx,
+            "tx": self._tx,
+            "connectedAt": self._connected_at,
+        })
