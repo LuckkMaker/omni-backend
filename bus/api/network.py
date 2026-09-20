@@ -17,6 +17,7 @@ router = APIRouter()
 
 tcp_server = network_backend.TcpServerBackend(event_manager)
 tcp_client = network_backend.TcpClientBackend(event_manager)
+udp = network_backend.UdpBackend(event_manager)
 ping = network_backend.PingBackend(event_manager)
 
 
@@ -148,6 +149,63 @@ async def tcp_client_send(req: SendRequest):
 async def tcp_client_status():
     """TCP Client 状态"""
     return tcp_client.status()
+
+
+class UdpStartRequest(BaseModel):
+    local_host: str = Field(..., description="本地绑定地址（本机 IPv4 或 0.0.0.0）")
+    local_port: int = Field(..., description="本地绑定端口 (1-65535)")
+
+
+class UdpSendRequest(BaseModel):
+    data: str = Field(..., description="hex 字符串")
+    target_host: str = Field(..., description="目标地址（支持广播）")
+    target_port: int = Field(..., description="目标端口 (1-65535)")
+
+
+@router.post("/udp/start")
+async def udp_start(req: UdpStartRequest):
+    """启动 UDP（绑定本地地址/端口开始接收）"""
+    if not req.local_host.strip():
+        return {"success": False, "error": "未指定本地绑定地址"}
+    if not _validate_port(req.local_port):
+        return {"success": False, "error": f"无效本地端口: {req.local_port}（应为 1-65535）"}
+    return await udp.start(req.local_host.strip(), req.local_port)
+
+
+@router.post("/udp/stop")
+async def udp_stop():
+    """停止 UDP"""
+    return await udp.stop()
+
+
+class UdpEchoRequest(BaseModel):
+    enabled: bool = Field(..., description="是否开启回声")
+
+
+@router.post("/udp/echo")
+async def udp_echo(req: UdpEchoRequest):
+    """开/关 UDP 回声（将收到的数据原样返回给来源）"""
+    return await udp.set_echo(req.enabled)
+
+
+@router.post("/udp/send")
+async def udp_send(req: UdpSendRequest):
+    """发送 UDP 数据报到目标地址"""
+    if not req.target_host.strip():
+        return {"success": False, "error": "未指定目标地址"}
+    if not _validate_port(req.target_port):
+        return {"success": False, "error": f"无效目标端口: {req.target_port}（应为 1-65535）"}
+    try:
+        data = network_backend.parse_hex(req.data)
+    except ValueError as e:
+        return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await udp.send(data, req.target_host.strip(), req.target_port)
+
+
+@router.get("/udp/status")
+async def udp_status():
+    """UDP 状态"""
+    return udp.status()
 
 
 @router.post("/ping/start")

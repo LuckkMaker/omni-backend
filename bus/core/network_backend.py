@@ -683,3 +683,171 @@ class TcpClientBackend:
             "tx": self._tx,
             "connectedAt": self._connected_at,
         })
+
+
+# ── UDP 后端 ────────────────────────────────────────────────
+
+
+class _UdpProtocol(asyncio.DatagramProtocol):
+    """UDP 数据报处理：收到远端数据报回调 backend"""
+
+    def __init__(self, backend: "UdpBackend"):
+        self._backend = backend
+
+    def datagram_received(self, data: bytes, addr):
+        self._backend._on_datagram(data, addr)
+
+    def error_received(self, exc):
+        self._backend._event_manager.log(
+            "warning", f"Network UDP 收包异常: {exc}")
+
+
+class UdpBackend:
+    """基于 asyncio DatagramProtocol 的 UDP 调试端
+
+    绑定本地 host:port 用于接收；发送时指定目标 host:port（支持广播地址）。
+    独立命名空间推送：
+      - network.udp.status (JSON): {running, localHost, localPort, rx, tx}
+      - network.udp.data  (JSON): {direction, data(hex), timestamp, addr, kind?}
+    """
+
+    def __init__(self, event_manager):
+        self._event_manager = event_manager
+        self._transport = None
+        self._local_host = None
+        self._local_port = None
+        self._rx = 0
+        self._tx = 0
+        self._echo = False
+
+    @property
+    def running(self) -> bool:
+        return self._transport is not None
+
+    async def start(self, local_host: str, local_port: int) -> dict:
+        """绑定本地地址/端口开始接收 UDP"""
+        if self.running:
+            return {"success": False, "error": "UDP 已在运行"}
+
+        loop = asyncio.get_running_loop()
+        try:
+            transport, _ = await loop.create_datagram_endpoint(
+                lambda: _UdpProtocol(self),
+                local_addr=(local_host, local_port),
+            )
+        except OSError as e:
+            self._event_manager.log(
+                "error", f"Network UDP 绑定失败 [{local_host}:{local_port}]: {e}")
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            self._event_manager.log(
+                "error", f"Network UDP 绑定失败: {e}")
+            return {"success": False, "error": str(e)}
+
+        self._transport = transport
+        self._local_host = local_host
+        self._local_port = local_port
+        self._rx = 0
+        self._tx = 0
+        self._event_manager.log(
+            "info", f"Network UDP 已启动: {local_host}:{local_port}")
+        self._event_manager.emit("network.udp.data", {
+            "direction": "rx", "data": "", "timestamp": _now(),
+            "addr": f"{local_host}:{local_port}", "kind": "connect",
+        })
+        self._emit_status()
+        return {"success": True, "host": local_host, "port": local_port}
+
+    async def stop(self) -> dict:
+        """停止接收并关闭 socket"""
+        transport = self._transport
+        self._transport = None
+        host, port = self._local_host, self._local_port
+        if host is not None:
+            self._event_manager.log(
+                "info", f"Network UDP 已停止: {host}:{port}")
+            self._event_manager.emit("network.udp.data", {
+                "direction": "tx", "data": "", "timestamp": _now(),
+                "addr": f"{host}:{port}", "kind": "disconnect",
+            })
+        else:
+            self._event_manager.log("info", "Network UDP 已停止")
+        self._local_host = None
+        self._local_port = None
+        if transport is not None:
+            transport.close()
+        self._emit_status()
+        return {"success": True}
+
+    def _on_datagram(self, data: bytes, addr):
+        """收到数据报（事件循环线程内回调）"""
+        if self._transport is None:
+            return
+        self._rx += len(data)
+        addr_str = f"{addr[0]}:{addr[1]}" if isinstance(addr, tuple) else str(addr)
+        self._event_manager.emit("network.udp.data", {
+            "direction": "rx",
+            "data": data.hex().upper(),
+            "timestamp": _now(),
+            "addr": addr_str,
+            "kind": "data",
+        })
+        if self._echo:
+            # 回声：将收到的数据原样返回给来源地址；回显包同样作为 TX 报文展示并计入统计
+            try:
+                self._transport.sendto(data, addr)
+            except Exception as e:
+                self._event_manager.log(
+                    "warning", f"Network UDP 回声发送失败: {e}")
+                return
+            self._tx += len(data)
+            self._event_manager.emit("network.udp.data", {
+                "direction": "tx",
+                "data": data.hex().upper(),
+                "timestamp": _now(),
+                "addr": addr_str,
+                "kind": "data",
+            })
+
+    async def set_echo(self, enabled: bool) -> dict:
+        """开/关回声（运行时生效，无需重启）"""
+        self._echo = bool(enabled)
+        state = "开启" if self._echo else "关闭"
+        self._event_manager.log("info", f"Network UDP Echo {state}")
+        return {"success": True, "echo": self._echo}
+
+    async def send(self, data: bytes, target_host: str, target_port: int) -> dict:
+        """发送 UDP 数据报到目标地址（支持广播目标）"""
+        if self._transport is None:
+            return {"success": False, "error": "UDP 未启动"}
+        try:
+            self._transport.sendto(data, (target_host, target_port))
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        self._tx += len(data)
+        self._event_manager.emit("network.udp.data", {
+            "direction": "tx",
+            "data": data.hex().upper(),
+            "timestamp": _now(),
+            "addr": f"{target_host}:{target_port}",
+            "kind": "data",
+        })
+        return {"success": True}
+
+    def status(self) -> dict:
+        return {
+            "running": self.running,
+            "localHost": self._local_host,
+            "localPort": self._local_port,
+            "rx": self._rx,
+            "tx": self._tx,
+        }
+
+    def _emit_status(self):
+        self._event_manager.emit("network.udp.status", {
+            "running": self.running,
+            "localHost": self._local_host,
+            "localPort": self._local_port,
+            "rx": self._rx,
+            "tx": self._tx,
+        })
