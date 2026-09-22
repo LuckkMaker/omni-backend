@@ -73,6 +73,21 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="milliseconds")
 
 
+def _parse_target(target: str) -> tuple[str | None, int | None]:
+    """解析 'host:port' 目标（UDP 定时发送用）；非法返回 (None, None)"""
+    idx = target.rfind(":")
+    if idx <= 0:
+        return None, None
+    host = target[:idx]
+    try:
+        port = int(target[idx + 1:])
+    except ValueError:
+        return None, None
+    if not host or not (0 < port <= 65535):
+        return None, None
+    return host, port
+
+
 # ── TCP Server 后端 ──────────────────────────────────────────
 
 
@@ -90,6 +105,10 @@ class TcpServerBackend:
         self._clients: dict[str, dict] = {}
         self._client_seq = 0
         self._echo = False
+        self._auto_send_task: asyncio.Task | None = None
+        self._auto_send_data: bytes = b""
+        self._auto_send_targets: list[str] | None = None
+        self._auto_send_interval: float = 1.0
 
     @property
     def running(self) -> bool:
@@ -124,6 +143,7 @@ class TcpServerBackend:
         """停止服务器并断开所有客户端"""
         server = self._server
         self._server = None
+        await self._cancel_auto_send()
         clients = list(self._clients.values())
         for c in clients:
             await self._close_writer(c.get("writer"))
@@ -300,6 +320,57 @@ class TcpServerBackend:
         if client is None:
             return {"success": False, "error": f"客户端 {client_id} 不存在"}
         await self._close_writer(client.get("writer"))
+        return {"success": True}
+
+    async def start_auto_send(self, data: bytes, interval_ms: int, targets: list[str] | None = None) -> dict:
+        """启动定时发送（后端 asyncio 任务，浏览器最小化不受节流影响）"""
+        if not self.running:
+            return {"success": False, "error": "TCP Server 未运行"}
+        await self._cancel_auto_send()
+        self._auto_send_data = data
+        self._auto_send_targets = targets
+        self._auto_send_interval = max(10, int(interval_ms)) / 1000.0
+        self._auto_send_task = asyncio.create_task(self._auto_send_loop())
+        self._event_manager.log("info", "Network TCP Server 定时发送已启动")
+        return {"success": True}
+
+    async def stop_auto_send(self) -> dict:
+        """停止 TCP Server 定时发送"""
+        return await self._cancel_auto_send()
+
+    async def update_auto_send(self, data: bytes, interval_ms: int, targets: list[str] | None = None) -> dict:
+        """运行中更新定时发送载荷/间隔/目标（不重启任务，下一拍即生效）"""
+        self._auto_send_data = data
+        if targets is not None:
+            self._auto_send_targets = targets
+        self._auto_send_interval = max(10, int(interval_ms)) / 1000.0
+        return {"success": True}
+
+    async def _auto_send_loop(self):
+        try:
+            while self.running:
+                await asyncio.sleep(self._auto_send_interval)
+                if not self.running:
+                    break
+                try:
+                    await self.send(self._auto_send_data, self._auto_send_targets)
+                except Exception as e:
+                    logger.debug("tcp auto send error: %s", e)
+        except asyncio.CancelledError:
+            pass
+
+    async def _cancel_auto_send(self) -> dict:
+        task = self._auto_send_task
+        if task is None:
+            return {"success": True}
+        self._auto_send_task = None
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._event_manager.log("info", "Network TCP Server 定时发送已停止")
         return {"success": True}
 
     def status(self) -> dict:
@@ -549,6 +620,9 @@ class TcpClientBackend:
         self._tx = 0
         self._connected_at = None
         self._recv_task = None
+        self._auto_send_task: asyncio.Task | None = None
+        self._auto_send_data: bytes = b""
+        self._auto_send_interval: float = 1.0
 
     @property
     def running(self) -> bool:
@@ -596,6 +670,7 @@ class TcpClientBackend:
         was_connected = self._connected
         host, port = self._host, self._port
         self._connected = False
+        await self._cancel_auto_send()
         self._reader = None
         writer = self._writer
         self._writer = None
@@ -664,6 +739,54 @@ class TcpClientBackend:
         })
         return {"success": True}
 
+    async def start_auto_send(self, data: bytes, interval_ms: int) -> dict:
+        """启动定时发送（后端 asyncio 任务，浏览器最小化不受节流影响）"""
+        if not self._connected:
+            return {"success": False, "error": "TCP Client 未连接"}
+        await self._cancel_auto_send()
+        self._auto_send_data = data
+        self._auto_send_interval = max(10, int(interval_ms)) / 1000.0
+        self._auto_send_task = asyncio.create_task(self._auto_send_loop())
+        self._event_manager.log("info", "Network TCP Client 定时发送已启动")
+        return {"success": True}
+
+    async def stop_auto_send(self) -> dict:
+        """停止 TCP Client 定时发送"""
+        return await self._cancel_auto_send()
+
+    async def update_auto_send(self, data: bytes, interval_ms: int) -> dict:
+        """运行中更新定时发送载荷/间隔（不重启任务，下一拍即生效）"""
+        self._auto_send_data = data
+        self._auto_send_interval = max(10, int(interval_ms)) / 1000.0
+        return {"success": True}
+
+    async def _auto_send_loop(self):
+        try:
+            while self._connected:
+                await asyncio.sleep(self._auto_send_interval)
+                if not self._connected:
+                    break
+                try:
+                    await self.send(self._auto_send_data)
+                except Exception as e:
+                    logger.debug("tcp client auto send error: %s", e)
+        except asyncio.CancelledError:
+            pass
+
+    async def _cancel_auto_send(self) -> dict:
+        task = self._auto_send_task
+        if task is None:
+            return {"success": True}
+        self._auto_send_task = None
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._event_manager.log("info", "Network TCP Client 定时发送已停止")
+        return {"success": True}
+
     def status(self) -> dict:
         return {
             "running": self._connected,
@@ -719,6 +842,10 @@ class UdpBackend:
         self._rx = 0
         self._tx = 0
         self._echo = False
+        self._auto_send_task: asyncio.Task | None = None
+        self._auto_send_data: bytes = b""
+        self._auto_send_targets: list[str] = []
+        self._auto_send_interval: float = 1.0
 
     @property
     def running(self) -> bool:
@@ -762,6 +889,7 @@ class UdpBackend:
         """停止接收并关闭 socket"""
         transport = self._transport
         self._transport = None
+        await self._cancel_auto_send()
         host, port = self._local_host, self._local_port
         if host is not None:
             self._event_manager.log(
@@ -815,6 +943,64 @@ class UdpBackend:
         state = "开启" if self._echo else "关闭"
         self._event_manager.log("info", f"Network UDP Echo {state}")
         return {"success": True, "echo": self._echo}
+
+    async def start_auto_send(self, data: bytes, interval_ms: int, targets: list[str]) -> dict:
+        """启动定时发送（后端 asyncio 任务，浏览器最小化不受节流影响）"""
+        if not self.running:
+            return {"success": False, "error": "UDP 未启动"}
+        if not targets:
+            return {"success": False, "error": "未指定目标"}
+        await self._cancel_auto_send()
+        self._auto_send_data = data
+        self._auto_send_targets = list(targets)
+        self._auto_send_interval = max(10, int(interval_ms)) / 1000.0
+        self._auto_send_task = asyncio.create_task(self._auto_send_loop())
+        self._event_manager.log("info", "Network UDP 定时发送已启动")
+        return {"success": True}
+
+    async def stop_auto_send(self) -> dict:
+        """停止 UDP 定时发送"""
+        return await self._cancel_auto_send()
+
+    async def update_auto_send(self, data: bytes, interval_ms: int, targets: list[str]) -> dict:
+        """运行中更新定时发送载荷/间隔/目标（不重启任务，下一拍即生效）"""
+        if not targets:
+            return {"success": False, "error": "未指定目标"}
+        self._auto_send_data = data
+        self._auto_send_targets = list(targets)
+        self._auto_send_interval = max(10, int(interval_ms)) / 1000.0
+        return {"success": True}
+
+    async def _auto_send_loop(self):
+        try:
+            while self.running:
+                await asyncio.sleep(self._auto_send_interval)
+                if not self.running:
+                    break
+                for target in self._auto_send_targets:
+                    host, port = _parse_target(target)
+                    if host is None or port is None:
+                        continue
+                    try:
+                        await self.send(self._auto_send_data, host, port)
+                    except Exception as e:
+                        logger.debug("udp auto send error: %s", e)
+        except asyncio.CancelledError:
+            pass
+
+    async def _cancel_auto_send(self) -> dict:
+        task = self._auto_send_task
+        if task is None:
+            return {"success": True}
+        self._auto_send_task = None
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._event_manager.log("info", "Network UDP 定时发送已停止")
+        return {"success": True}
 
     async def send(self, data: bytes, target_host: str, target_port: int) -> dict:
         """发送 UDP 数据报到目标地址（支持广播目标）"""

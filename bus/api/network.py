@@ -45,6 +45,12 @@ class PingStartRequest(BaseModel):
     size: int = Field(32, ge=0, le=65500, description="包长 (字节)")
 
 
+class AutoSendRequest(BaseModel):
+    data: str = Field(..., description="hex 字符串（定时发送载荷）")
+    interval_ms: int = Field(1000, ge=10, le=60000, description="发送间隔 (ms)")
+    targets: list[str] | None = Field(None, description="TCP Server 客户端 id 或 UDP 'host:port' 目标列表")
+
+
 # ── 验证辅助 ──────────────────────────────────────────────
 
 def _validate_port(port: int):
@@ -114,6 +120,32 @@ async def tcp_server_clients():
     return {"clients": tcp_server.clients()}
 
 
+@router.post("/tcp-server/auto-send/start")
+async def tcp_server_auto_send_start(req: AutoSendRequest):
+    """启动 TCP Server 定时发送（后端 asyncio 任务）"""
+    try:
+        data = network_backend.parse_hex(req.data)
+    except ValueError as e:
+        return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await tcp_server.start_auto_send(data, req.interval_ms, req.targets)
+
+
+@router.post("/tcp-server/auto-send/stop")
+async def tcp_server_auto_send_stop():
+    """停止 TCP Server 定时发送"""
+    return await tcp_server.stop_auto_send()
+
+
+@router.post("/tcp-server/auto-send/update")
+async def tcp_server_auto_send_update(req: AutoSendRequest):
+    """运行中更新 TCP Server 定时发送载荷/间隔/目标（不重启任务）"""
+    try:
+        data = network_backend.parse_hex(req.data)
+    except ValueError as e:
+        return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await tcp_server.update_auto_send(data, req.interval_ms, req.targets)
+
+
 class TcpClientConnectRequest(BaseModel):
     host: str = Field(..., description="目标服务器地址")
     port: int = Field(..., description="目标服务器端口")
@@ -149,6 +181,32 @@ async def tcp_client_send(req: SendRequest):
 async def tcp_client_status():
     """TCP Client 状态"""
     return tcp_client.status()
+
+
+@router.post("/tcp-client/auto-send/start")
+async def tcp_client_auto_send_start(req: AutoSendRequest):
+    """启动 TCP Client 定时发送（后端 asyncio 任务）"""
+    try:
+        data = network_backend.parse_hex(req.data)
+    except ValueError as e:
+        return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await tcp_client.start_auto_send(data, req.interval_ms)
+
+
+@router.post("/tcp-client/auto-send/stop")
+async def tcp_client_auto_send_stop():
+    """停止 TCP Client 定时发送"""
+    return await tcp_client.stop_auto_send()
+
+
+@router.post("/tcp-client/auto-send/update")
+async def tcp_client_auto_send_update(req: AutoSendRequest):
+    """运行中更新 TCP Client 定时发送载荷/间隔（不重启任务）"""
+    try:
+        data = network_backend.parse_hex(req.data)
+    except ValueError as e:
+        return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await tcp_client.update_auto_send(data, req.interval_ms)
 
 
 class UdpStartRequest(BaseModel):
@@ -206,6 +264,36 @@ async def udp_send(req: UdpSendRequest):
 async def udp_status():
     """UDP 状态"""
     return udp.status()
+
+
+@router.post("/udp/auto-send/start")
+async def udp_auto_send_start(req: AutoSendRequest):
+    """启动 UDP 定时发送（后端 asyncio 任务，targets 每项为 'host:port'）"""
+    if not req.targets:
+        return {"success": False, "error": "未指定目标"}
+    try:
+        data = network_backend.parse_hex(req.data)
+    except ValueError as e:
+        return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await udp.start_auto_send(data, req.interval_ms, req.targets)
+
+
+@router.post("/udp/auto-send/stop")
+async def udp_auto_send_stop():
+    """停止 UDP 定时发送"""
+    return await udp.stop_auto_send()
+
+
+@router.post("/udp/auto-send/update")
+async def udp_auto_send_update(req: AutoSendRequest):
+    """运行中更新 UDP 定时发送载荷/间隔/目标（不重启任务）"""
+    if not req.targets:
+        return {"success": False, "error": "未指定目标"}
+    try:
+        data = network_backend.parse_hex(req.data)
+    except ValueError as e:
+        return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await udp.update_auto_send(data, req.interval_ms, req.targets)
 
 
 @router.post("/ping/start")
