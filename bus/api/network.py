@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from core.events import event_manager
 from core import network_backend
+from core.tftp_backend import TftpServerBackend, TftpClientBackend
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -19,6 +20,8 @@ tcp_server = network_backend.TcpServerBackend(event_manager)
 tcp_client = network_backend.TcpClientBackend(event_manager)
 udp = network_backend.UdpBackend(event_manager)
 ping = network_backend.PingBackend(event_manager)
+tftp_server = TftpServerBackend(event_manager)
+tftp_client = TftpClientBackend(event_manager)
 
 
 # ── 请求模型 ──────────────────────────────────────────────
@@ -316,3 +319,81 @@ async def ping_stop():
 async def ping_status():
     """Ping 状态"""
     return ping.status()
+
+
+# ── TFTP ────────────────────────────────────────────────────
+
+
+class TftpServerStartRequest(BaseModel):
+    root: str = Field(..., description="根目录（供设备下载/上传文件的文件夹）")
+    host: str = Field("0.0.0.0", description="监听地址（默认 0.0.0.0）")
+    port: int = Field(69, description="监听端口 (1-65535)")
+
+
+class TftpClientTransferRequest(BaseModel):
+    host: str = Field(..., description="服务器地址")
+    port: int = Field(69, description="服务器端口 (1-65535)")
+    remote: str = Field(..., description="远端文件名")
+    local: str = Field(..., description="本地文件路径")
+
+
+@router.post("/tftp/server/start")
+async def tftp_server_start(req: TftpServerStartRequest):
+    """启动 TFTP Server（绑定 UDP 端口，供设备拉取/上报文件）"""
+    if not req.root.strip():
+        return {"success": False, "error": "未指定根目录"}
+    if not (req.host.strip() or req.host == "0.0.0.0"):
+        return {"success": False, "error": "未指定监听地址"}
+    if not _validate_port(req.port):
+        return {"success": False, "error": f"无效端口: {req.port}（应为 1-65535）"}
+    return await tftp_server.start(req.root.strip(), req.host.strip(), req.port)
+
+
+@router.post("/tftp/server/stop")
+async def tftp_server_stop():
+    """停止 TFTP Server"""
+    return await tftp_server.stop()
+
+
+@router.get("/tftp/server/status")
+async def tftp_server_status():
+    """TFTP Server 状态"""
+    return tftp_server.status()
+
+
+@router.get("/tftp/server/files")
+async def tftp_server_files():
+    """列出根目录下可被下载的文件"""
+    return {"files": tftp_server.list_files()}
+
+
+@router.post("/tftp/client/download")
+async def tftp_client_download(req: TftpClientTransferRequest):
+    """TFTP 客户端下载：从远端服务器拉取文件到本地"""
+    if not req.host.strip():
+        return {"success": False, "error": "未指定服务器地址"}
+    if not _validate_port(req.port):
+        return {"success": False, "error": f"无效端口: {req.port}（应为 1-65535）"}
+    return await tftp_client.download(req.host.strip(), req.port, req.remote, req.local)
+
+
+@router.post("/tftp/client/upload")
+async def tftp_client_upload(req: TftpClientTransferRequest):
+    """TFTP 客户端上传：将本地文件写入远端服务器"""
+    if not req.host.strip():
+        return {"success": False, "error": "未指定服务器地址"}
+    if not _validate_port(req.port):
+        return {"success": False, "error": f"无效端口: {req.port}（应为 1-65535）"}
+    return await tftp_client.upload(req.host.strip(), req.port, req.local, req.remote)
+
+
+@router.post("/tftp/client/cancel")
+async def tftp_client_cancel():
+    """取消当前 TFTP 客户端传输"""
+    return await tftp_client.cancel()
+
+
+@router.get("/tftp/client/status")
+async def tftp_client_status():
+    """TFTP 客户端状态与当前传输进度"""
+    return tftp_client.status()
