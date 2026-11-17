@@ -96,9 +96,11 @@ git merge --allow-unrelated-histories bus/dev
 | `link/tests/test_*.py`（8 个） | 全绿 |
 | `bus/tests/test_usb_{decode,manager,pcap}.py` | 全绿 |
 | `python link/build.py --check-sources` | 通过（UTF-8，无 U+FFFD） |
+| `scripts/build.py --service link`（PyInstaller 全量） | 成功：`dist/link/omni-backend/omni-backend.exe` 11.9 MB，整包 57.4 MB，`--help` 自检通过 |
+| `scripts/build.py --service bus`（PyInstaller 全量） | 成功：`dist/bus/omni-bus-backend/omni-bus-backend.exe` 5.4 MB，整包 21.8 MB，`--help` 自检通过 |
+| 打包产物实跑（两个 exe） | 握手 → `/api/health`（`service`/`protocol`/`version` 正确）→ `POST /api/system/shutdown` → 进程退出、登记表清理 |
 
-`scripts/build.py`（PyInstaller 全量打包）在 GUI 仓库接入时由 `build.ps1` 调用，
-本地未执行完整打包（体积大、耗时），CI 的 `build` job 覆盖。
+CI 的 `build` job（tag 触发）复跑同一套打包流程。
 
 ## 5. 后续阶段的落地情况
 
