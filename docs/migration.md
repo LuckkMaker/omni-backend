@@ -100,13 +100,46 @@ git merge --allow-unrelated-histories bus/dev
 `scripts/build.py`（PyInstaller 全量打包）在 GUI 仓库接入时由 `build.ps1` 调用，
 本地未执行完整打包（体积大、耗时），CI 的 `build` job 覆盖。
 
-## 5. 后续
+## 5. 后续阶段的落地情况
 
-- **阶段 2（omni-link）**：加 `vendor/omni-backend` 子模块、删 `python/` 源码、
-  改 `python-bridge.ts` / `package.json` / `build.ps1`。
-- **阶段 3（omni-bus）**：同上，并处理 §3 第 1 条的 exe 名与 `extraResources`。
-- **阶段 4（omni-cli）**：`settings.services()` 多服务、`backend start|stop|status [link|bus]`、
-  自动探测已安装 GUI 的后端。
+### 5.1 阶段 2（omni-link）——已完成
+
+- 新增子模块 `vendor/omni-backend`（本地 clone + 手写 `.gitmodules` + `absorbgitdirs`，
+  绕开 Git 对 `file://` 子模块的限制），指针固定到迁移提交。
+- 删除仓库内 `python/` 源码（434 个文件）；`python/` 只作为打包输出目录
+  （`build.ps1` 会重建 `python/dist/omni-backend` 与 `python/dist/omni.exe`）。
+- `electron/python-bridge.ts` 开发态候选：`OMNI_BACKEND_DIR` →
+  `<repo>/vendor/omni-backend/link/server.py` → 旧 `<repo>/python/server.py`（过渡兜底）；
+  生产态仍是 `resources/python/omni-backend.exe`。
+- `package.json`：`python:dev` / `python:install` 指向 `vendor/omni-backend/link`。
+- `build.ps1`：新增后端子模块守卫；Step 1 改为
+  `link/build.py --out "$ProjectRoot\python\dist"`（产物路径与 `extraResources` 不变）。
+- 开发态数据（`devices.db`、已装 CMSIS-Pack）从 `python/data/` 迁到
+  `vendor/omni-backend/link/data/`，未丢失。
+- 验证：`npm run typecheck` 通过；`npm run python:dev` 起后端（端口 9001、
+  `service=link`、`version=0.3.2`）并优雅关停；子模块工作区干净。
+
+### 5.2 阶段 4（omni-cli）——已完成
+
+- `settings.py`：`ServiceInfo` / `services()`，两个服务各自的状态目录、登记表、
+  运行时记录、后端目录解析（环境变量 → 持久化配置 → 仓库布局 → 已安装 GUI）。
+- 新增 `autoinstall.py`：探测 `%LOCALAPPDATA%/Programs/omni-{link,bus}/resources/python`
+  与 `OMNI_LINK_HOME` / `OMNI_BUS_HOME`。
+- `runtime.py`：命令组 → 服务映射（`serial/net/modbus/usb` → bus，其余 → link）、
+  `--service link|bus` 覆盖、`* status` 拒绝 `--managed`。
+- `commands/backend.py`：`start|stop|status [link|bus]`（默认 link，向后兼容）+ `list`；
+  `status` 不带服务名时输出两个服务，`--json` 带 `services` 数组。
+- `docs/backend-protocol.md` 改为指向本仓库 `docs/protocol.md`（单一来源）。
+- 验证：11 个 CLI 测试全绿；`omni backend start/status/list/stop`（link + bus）、
+  `probe list`、GUI 已启动后端的复用、`--service` 覆盖、启动失败时的可执行提示均实测通过。
+
+### 5.3 阶段 3（omni-bus GUI）——未做
+
+- `git rm -r python`、加子模块、`python-bridge.ts` 候选改为 `vendor/omni-backend/bus/server.py`、
+  `build.ps1` 调 `bus/build.py --out python/dist`。
+- **必须同时处理**：bus 产物 exe 名为 `omni-bus-backend.exe`，因此 `extraResources`
+  （`python/dist/omni-bus-backend` → `resources/python`）与 `python-bridge.ts` 里的
+  `omni-backend.exe` 字面量都要改；否则安装包会缺后端。
 
 ## 6. 回滚
 

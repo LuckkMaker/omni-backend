@@ -1,6 +1,6 @@
 # OMNI 后端独立化计划（omni-backend 仓库）
 
-> 状态：已执行（阶段 0 / 1 完成；阶段 2 / 4 进行中，阶段 3 待做）
+> 状态：已执行（阶段 0 / 1 / 2 / 4 完成；阶段 3（omni-bus GUI 接入）待做）
 > 执行记录与偏差：见 `docs/migration.md`
 > 编写日期：2026-11-17
 > 适用仓库：`omni-link`、`omni-bus`、`omni-cli`，以及新建的 `omni-backend`
