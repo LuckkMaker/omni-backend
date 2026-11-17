@@ -138,14 +138,36 @@ CI 的 `build` job（tag 触发）复跑同一套打包流程。
 - 验证：11 个 CLI 测试全绿；`omni backend start/status/list/stop`（link + bus）、
   `probe list`、GUI 已启动后端的复用、`--service` 覆盖、启动失败时的可执行提示均实测通过。
 
-### 5.3 阶段 3（omni-bus GUI）——未做
+### 5.3 阶段 3（omni-bus GUI）——已完成
 
-- `git rm -r python`、加子模块、`python-bridge.ts` 候选改为 `vendor/omni-backend/bus/server.py`、
-  `build.ps1` 调 `bus/build.py --out python/dist`。
-- **必须同时处理**：bus 产物 exe 名为 `omni-bus-backend.exe`，因此 `extraResources`
-  （`python/dist/omni-bus-backend` → `resources/python`）与 `python-bridge.ts` 里的
-  `omni-bus-backend.exe` 字面量都要改；否则安装包会缺后端。
-  （命名已与 link 的 `omni-link-backend.exe` 对称，见 §3 第 1 条。）
+- 先提交了 omni-bus 工作区里未提交的 USB 分析仪实现（前端页面 + 当时还在 `python/` 的后端），
+  否则删 `python/` 会把在途功能一起丢掉。
+- 新增子模块 `vendor/omni-backend`（同 §6.1 的本地 clone + `.gitmodules` + `absorbgitdirs`），
+  删除仓库内 `python/` 源码（25 个文件）；`python/` 只作为打包输出目录。
+- `electron/python-bridge.ts` 开发态候选：`OMNI_BUS_BACKEND_DIR` →
+  `<repo>/vendor/omni-backend/bus/server.py` → 旧 `<repo>/python/server.py`（兜底）；
+  生产态改为 `resources/python/omni-bus-backend.exe`；开发端口支持 `OMNI_BUS_BACKEND_PORT`，
+  默认 9004（与 `bus/backend.config.json` 一致）。
+- `package.json`：`python:dev` / `python:install` 指向 `vendor/omni-backend/bus`；
+  `extraResources.from` 改为 `python/dist/omni-bus-backend`。
+- `build.ps1`：新增后端子模块守卫；Step 1 改为 `bus/build.py --out "$ProjectRoot\python\dist"`；
+  产物校验与结尾汇报改为 `omni-bus-backend`；文件存为 UTF-8 with BOM（`npm run package`
+  走 PowerShell 5.1，无 BOM 的中文会被按 GBK 解析）。
+- 文档：README 目录结构与安装步骤、`docs/usb-analyzer.md`、`docs/network-page-plan.md`、
+  `DEVELOPMENT_PLAN.md` 的后端路径改为 `vendor/omni-backend/bus/`。
+
+验证：
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过（node + web） |
+| `npm run python:dev` | 起 bus 后端（端口 9004），握手 / health（`service=bus`、`protocol=1`、`version=0.1.1`）正常，登记表写入 `%LOCALAPPDATA%\omni-bus\backend.json` |
+| CLI 发现 GUI 起的 bus 后端 | `omni backend status` 显示 `运行中 bus 端口=9004 pid=… 协议=1 版本=0.1.1`（阶段 3 之前不可能：旧副本没有登记表） |
+| `npm run package` | 成功：`release/OMNI Bus-0.2.4-x64-setup.exe`（105 MB），`python/dist/omni-bus-backend`（27.2 MB） |
+| 打包后的 `omni-bus-backend.exe` 实跑 | 握手 → `/api/health` → `/api/system/serial-ports`（枚举到 COM55）→ shutdown → 登记表清理 |
+
+注意：USB 功能本身仍有已知缺陷（在 omni-bus 里先落库保存进度）；修后端问题时改本仓库
+`bus/` 下的代码，**不要再改 omni-bus 里的 `python/`**（已删除）。
 
 ## 6. 回滚
 
