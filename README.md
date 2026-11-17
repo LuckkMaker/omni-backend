@@ -56,7 +56,7 @@ python bus/tests/test_usb_decode.py
 ## 打包
 
 ```bash
-python scripts/build.py --service link        # dist/link/omni-backend/omni-backend.exe
+python scripts/build.py --service link        # dist/link/omni-backend/omni-link-backend.exe
 python scripts/build.py --service bus         # dist/bus/omni-bus-backend/omni-bus-backend.exe
 python scripts/build.py --service all --clean # 两个都打
 ```

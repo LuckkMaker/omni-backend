@@ -13,7 +13,7 @@
 
 产物统一落在 ``<repo>/dist/<service>/``：
 
-- ``dist/link/omni-backend/omni-backend.exe``
+- ``dist/link/omni-link-backend/omni-link-backend.exe``
 - ``dist/bus/omni-bus-backend/omni-bus-backend.exe``
 
 每个产物构建后都会执行一次 ``<exe> --help`` 自检（只验证能启动解释器并加载依赖，
@@ -34,7 +34,7 @@ SERVICES = ("link", "bus")
 
 # 服务 → (构建脚本, 产物 exe 相对 dist/<service> 的路径)
 PRODUCTS = {
-    "link": ("link/build.py", Path("omni-backend") / "omni-backend"),
+    "link": ("link/build.py", Path("omni-link-backend") / "omni-link-backend"),
     "bus": ("bus/build.py", Path("omni-bus-backend") / "omni-bus-backend"),
 }
 

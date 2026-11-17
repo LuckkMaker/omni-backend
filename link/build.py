@@ -3,16 +3,17 @@
 Build script: package the Python backend into a standalone executable using PyInstaller.
 
 Usage:
-    python link/build.py                       # 输出 <repo>/dist/link/omni-backend/
+    python link/build.py                       # 输出 <repo>/dist/link/omni-link-backend/
     python link/build.py --clean               # 先清理旧产物
     python link/build.py --python PATH         # 指定解释器
     python link/build.py --out <dir>           # 指定输出根目录（默认 <repo>/dist/link）
 
 Output:
-    <out>/omni-backend/omni-backend.exe        # Backend executable (Windows)
+    <out>/omni-link-backend/omni-link-backend.exe        # Backend executable (Windows)
 
-产物目录名与 exe 名（``omni-backend``）保持不变：GUI 安装包的 ``extraResources``
-（``python/dist/omni-backend`` → ``resources/python``）与 NSIS 逻辑因此无需改动。
+产物名与 bus 服务对称（``omni-link-backend`` / ``omni-bus-backend``），便于在任务管理器、
+签名清单和日志里区分两个后端。GUI 安装包的 ``extraResources`` 必须指向本目录
+（``python/dist/omni-link-backend`` → ``resources/python``）；NSIS 的 PATH 逻辑只认目录，无需改动。
 
 CLI（omni.exe）不再由本脚本构建：它来自 omni-cli 仓库的
 ``scripts/build-exe.ps1``，由 GUI 仓库的 build.ps1 调用并拷到 dist/omni.exe。
@@ -32,7 +33,7 @@ REPO_ROOT = BACKEND_DIR.parent                          # <repo>
 COMMON_DIR = REPO_ROOT / "common"
 
 ENTRY_SCRIPT = BACKEND_DIR / "server.py"
-APP_NAME = "omni-backend"
+APP_NAME = "omni-link-backend"
 
 # 输出目录（默认 <repo>/dist/link），可被 --out 覆盖
 DIST_DIR = REPO_ROOT / "dist" / "link"

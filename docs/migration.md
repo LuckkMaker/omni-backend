@@ -12,7 +12,7 @@
 1. 两个后端（`link` / `bus`）从 GUI 仓库搬到独立仓库，GUI 退化为"外壳 + 打包脚本"。
 2. 两个后端仍是**两个独立进程**，只共享少量基础设施（登记表 / health / 优雅关停）。
 3. 协议不变：`/api/*` 路径、字段语义、`protocol = 1` 全部保持。
-4. 安装包路径不变：link 产物仍是 `omni-backend.exe`，落在 `resources/python/`。
+4. 安装包结构不变：后端产物仍落在安装包的 `resources/python/`，exe 名统一为 `<service>-backend`。
 
 ## 2. 实际步骤
 
@@ -68,11 +68,14 @@ git merge --allow-unrelated-histories bus/dev
 
 ## 3. 与原始计划的偏差
 
-1. **`omni-bus` 的 exe 名**：计划 §5.4.2 要求 `--name omni-bus-backend`，与 §3.2「安装包路径
-   不变（`resources/python/omni-backend.exe`）」冲突。本仓库按 §5.4.2 执行（两个安装包里
-   同名 exe 会互相覆盖），**阶段 3 接 omni-bus GUI 时必须同步调整** `build.ps1` 的
-   `extraResources`（`python/dist/omni-bus-backend`）与 `electron/python-bridge.ts` 里的
-   `omni-backend.exe` 字面量。
+1. **产物 exe 命名统一为 `<service>-backend`**：计划 §3.2 的硬约束是「安装包路径不变
+   （`resources/python/omni-backend.exe`）」，但 §5.4.2 又要求 bus 产物叫 `omni-bus-backend`，
+   两者不可能同时满足。最终取舍是**统一改名**：link 也改成 `omni-link-backend.exe`，
+   两个服务的产物目录/exe 名对称（`dist/link/omni-link-backend/`、`dist/bus/omni-bus-backend/`），
+   在任务管理器、签名清单、崩溃转储里能一眼区分。
+   代价是 GUI 侧各一处路径调整（`extraResources` 的 `from` 与 `python-bridge.ts` 里的
+   exe 字面量）；NSIS 的 PATH 逻辑只认 `resources/python` 目录，不受影响。
+   计划里「路径不变」的本意是**不要让安装包结构变化**，这一点仍然满足。
 2. **bus 未提交工作一并迁入**：计划只提到"未跟踪的构建产物不会带过来"，实际 bus 工作区
    有未提交的 USB 分析仪功能，属于必须保留的代码。
 3. **`link/core/toolchain.py`**：源码态的"安装根"由"仓库根"改为"服务目录（`link/`）"，
@@ -96,7 +99,7 @@ git merge --allow-unrelated-histories bus/dev
 | `link/tests/test_*.py`（8 个） | 全绿 |
 | `bus/tests/test_usb_{decode,manager,pcap}.py` | 全绿 |
 | `python link/build.py --check-sources` | 通过（UTF-8，无 U+FFFD） |
-| `scripts/build.py --service link`（PyInstaller 全量） | 成功：`dist/link/omni-backend/omni-backend.exe` 11.9 MB，整包 57.4 MB，`--help` 自检通过 |
+| `scripts/build.py --service link`（PyInstaller 全量） | 成功：`dist/link/omni-backend/omni-link-backend.exe` 11.9 MB，整包 57.4 MB，`--help` 自检通过 |
 | `scripts/build.py --service bus`（PyInstaller 全量） | 成功：`dist/bus/omni-bus-backend/omni-bus-backend.exe` 5.4 MB，整包 21.8 MB，`--help` 自检通过 |
 | 打包产物实跑（两个 exe） | 握手 → `/api/health`（`service`/`protocol`/`version` 正确）→ `POST /api/system/shutdown` → 进程退出、登记表清理 |
 
@@ -109,10 +112,10 @@ CI 的 `build` job（tag 触发）复跑同一套打包流程。
 - 新增子模块 `vendor/omni-backend`（本地 clone + 手写 `.gitmodules` + `absorbgitdirs`，
   绕开 Git 对 `file://` 子模块的限制），指针固定到迁移提交。
 - 删除仓库内 `python/` 源码（434 个文件）；`python/` 只作为打包输出目录
-  （`build.ps1` 会重建 `python/dist/omni-backend` 与 `python/dist/omni.exe`）。
+  （`build.ps1` 会重建 `python/dist/omni-link-backend` 与 `python/dist/omni.exe`）。
 - `electron/python-bridge.ts` 开发态候选：`OMNI_BACKEND_DIR` →
   `<repo>/vendor/omni-backend/link/server.py` → 旧 `<repo>/python/server.py`（过渡兜底）；
-  生产态仍是 `resources/python/omni-backend.exe`。
+  生产态仍是 `resources/python/omni-link-backend.exe`。
 - `package.json`：`python:dev` / `python:install` 指向 `vendor/omni-backend/link`。
 - `build.ps1`：新增后端子模块守卫；Step 1 改为
   `link/build.py --out "$ProjectRoot\python\dist"`（产物路径与 `extraResources` 不变）。
@@ -141,7 +144,8 @@ CI 的 `build` job（tag 触发）复跑同一套打包流程。
   `build.ps1` 调 `bus/build.py --out python/dist`。
 - **必须同时处理**：bus 产物 exe 名为 `omni-bus-backend.exe`，因此 `extraResources`
   （`python/dist/omni-bus-backend` → `resources/python`）与 `python-bridge.ts` 里的
-  `omni-backend.exe` 字面量都要改；否则安装包会缺后端。
+  `omni-bus-backend.exe` 字面量都要改；否则安装包会缺后端。
+  （命名已与 link 的 `omni-link-backend.exe` 对称，见 §3 第 1 条。）
 
 ## 6. 回滚
 
