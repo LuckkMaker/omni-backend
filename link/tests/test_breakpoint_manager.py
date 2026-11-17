@@ -18,8 +18,8 @@ from __future__ import annotations
 import os
 import sys
 
-PY_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, PY_DIR)
+LINK_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, LINK_DIR)
 
 from pyocd.core.target import Target
 from pyocd.debug.breakpoints.manager import BreakpointManager

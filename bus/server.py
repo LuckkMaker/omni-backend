@@ -2,14 +2,25 @@
 # Copyright (c) 2026 LuckkMaker
 # SPDX-License-Identifier: MIT
 """
-OMNI Bus - Python 后端入口
+OMNI Bus - Python 后端入口（omni-backend 仓库的 bus 服务）
 
-启动 FastAPI 服务器，通过 stdout 输出端口信息供 Electron 主进程读取。
+启动 FastAPI 服务器，通过 stdout 输出端口信息供 Electron 主进程 / omni-cli 读取。
+
+本服务只依赖同仓库的 ``common``（登记表 / health / 优雅关停），
+**不 import link**，两个后端始终是两个独立进程。
 """
 
 import sys
+from pathlib import Path
+
+# 仓库根：<repo>/bus/server.py -> <repo>
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import os
 import json
+import atexit
 import asyncio
 import argparse
 import logging
@@ -21,10 +32,17 @@ from api import system
 from api import serial
 from api import modbus
 from api import network
+from api import usb
 from core.events import event_manager
 
-# 后端版本号（与前端 package.json 保持一致）
-BACKEND_VERSION = "0.1.0"
+from common import omni_service
+
+# 后端版本号（bus 服务独立发版：bus-vX.Y.Z）
+BACKEND_VERSION = "0.1.1"
+
+# CLI ↔ 后端协议版本（只增不改语义；见 docs/protocol.md）
+PROTOCOL_VERSION = 1
+SERVICE_NAME = "bus"
 
 logger = logging.getLogger("omni-bus")
 
@@ -39,6 +57,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # 退出前停止 USB 捕获，避免遗留 USBPcapCMD 子进程
+    try:
+        usb.usb_manager.shutdown()
+    except Exception:
+        logger.exception("stop usb capture failed")
     logger.info("OMNI Bus backend shutdown")
 
 
@@ -58,6 +81,10 @@ app.include_router(system.router, prefix="/api", tags=["system"])
 app.include_router(serial.router, prefix="/api/serial", tags=["serial"])
 app.include_router(modbus.router, prefix="/api/modbus", tags=["modbus"])
 app.include_router(network.router, prefix="/api/network", tags=["network"])
+app.include_router(usb.router, prefix="/api/usb", tags=["usb"])
+
+# POST /api/system/shutdown：由 common 统一实现（含看门狗）
+omni_service.install_shutdown(app, SERVICE_NAME)
 
 
 # WebSocket 端点
@@ -68,25 +95,60 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/api/health")
 async def health():
-    return {
-        "status": "ok",
-        "ws_connections": event_manager.connection_count,
-    }
+    return omni_service.health_payload(
+        SERVICE_NAME,
+        BACKEND_VERSION,
+        PROTOCOL_VERSION,
+        ws_connections=event_manager.connection_count,
+    )
+
+
+def dev_config_candidates() -> list[str]:
+    """开发态端口配置文件的候选路径（按优先级）。
+
+    1. ``OMNI_DEV_CONFIG`` 显式指定的文件；
+    2. 后端目录自身的 ``backend.config.json``（本仓库布局：``bus/backend.config.json``）；
+    3. 上一级目录的 ``backend.config.json``（旧布局：后端在 ``<应用仓库>/python``，
+       配置放在应用仓库根）。
+    """
+    explicit = os.environ.get("OMNI_DEV_CONFIG")
+    if explicit:
+        return [explicit]
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    return [
+        os.path.join(backend_dir, "backend.config.json"),
+        os.path.normpath(os.path.join(backend_dir, "..", "backend.config.json")),
+    ]
 
 
 def load_config_port():
-    """从项目根目录的 backend.config.json 读取后端端口，未配置则返回 None。"""
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend.config.json")
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        port = cfg.get("backendPort")
-        return int(port) if port else None
-    except Exception:
-        return None
+    """读取开发态后端端口，未配置则返回 None（由调用方自动分配）。"""
+    for config_path in dev_config_candidates():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            port = cfg.get("backendPort")
+            return int(port) if port else None
+        except Exception:
+            continue
+    return None
+
+
+def _configure_stdio() -> None:
+    """把后端 stdout/stderr 固定为 UTF-8（CLI/Electron 按 UTF-8 读日志）。"""
+    if os.environ.get("PYTHONIOENCODING"):
+        return
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, OSError, ValueError):
+            pass
 
 
 def main():
+    _configure_stdio()
     parser = argparse.ArgumentParser(description="OMNI Bus Backend Server")
     parser.add_argument("--port", type=int, default=None,
                         help="监听端口 (默认读取 backend.config.json，未配置则自动分配)")
@@ -115,11 +177,17 @@ def main():
         actual_port = sock.getsockname()[1]
         sock.close()
 
-    # 输出端口信息（Electron 主进程读取此行）
+    # 输出端口信息（Electron 主进程 / CLI 读取此行）
     print(json.dumps({"port": actual_port}), flush=True)
 
-    # 使用 uvicorn 运行
-    uvicorn.run(
+    # 共享注册表：让 CLI 等外部进程能发现并复用本后端（退出时自动清理）
+    omni_service.publish_runtime(
+        SERVICE_NAME, BACKEND_VERSION, PROTOCOL_VERSION, args.host, actual_port
+    )
+    atexit.register(omni_service.unpublish_runtime, SERVICE_NAME)
+
+    # 使用 uvicorn.Server（而非 uvicorn.run）以便 /api/system/shutdown 触发优雅退出
+    config = uvicorn.Config(
         app,
         host=args.host,
         port=actual_port,
@@ -127,6 +195,9 @@ def main():
         access_log=False,
         ws="wsproto",
     )
+    server = uvicorn.Server(config)
+    app.state._server = server
+    server.run()
 
 
 if __name__ == "__main__":

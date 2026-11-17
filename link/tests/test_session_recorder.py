@@ -6,7 +6,7 @@ import tempfile
 import types
 
 # 避免依赖 core 包（recorder 无 core 依赖，但保险起见 mock）
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.session_recorder import SessionRecorder, _TYPE_SIZE
 

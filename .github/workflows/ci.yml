@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+    tags: ["link-v*", "bus-v*"]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # bus 的依赖在各平台都有 wheel，先在两个平台都装
+      - name: Install bus deps
+        run: python -m pip install -r bus/requirements.txt
+
+      - name: Shared contract unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Contract selfcheck (bus)
+        run: python scripts/selfcheck.py --service bus
+
+      - name: Bus regression tests
+        run: python bus/tests/test_usb_decode.py
+
+      # link 依赖（pyOCD 源码内置，但它的依赖与 cmsis-pack-manager 在 Linux 上
+      # 需要编译工具链，这里只在 Windows 上跑完整 link 校验）
+      - name: Install link deps
+        if: runner.os == 'Windows'
+        run: python -m pip install -r link/requirements.txt
+
+      - name: Contract selfcheck (link)
+        if: runner.os == 'Windows'
+        run: python scripts/selfcheck.py --service link
+
+      - name: Link regression tests
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -e
+          for t in link/tests/test_*.py; do
+            echo "--- $t ---"
+            python "$t"
+          done
+
+  build:
+    name: build (windows)
+    runs-on: windows-latest
+    needs: tests
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install -r link/requirements.txt
+          python -m pip install -r bus/requirements.txt
+          python -m pip install "pyinstaller>=6.0"
+
+      - name: Build all services
+        run: python scripts/build.py --service all
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: omni-backend-dist
+          path: dist/**/*
+          if-no-files-found: error

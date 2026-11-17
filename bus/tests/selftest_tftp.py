@@ -5,7 +5,7 @@ import struct
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.tftp_backend import (
     TftpServerBackend, pack_rq, pack_data, pack_ack, pack_error,

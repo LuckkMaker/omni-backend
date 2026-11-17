@@ -66,14 +66,19 @@ _PREPARED = False
 
 
 def _install_root() -> str:
-    """安装根目录；源码态退回 omni-link 仓库根。"""
+    """安装根目录；源码态退回本服务的源码目录（``link/``）。
+
+    注意：本文件是 omni-cli 仓库 ``omni_cli/toolchain.py`` 的同源副本。后端独立成仓后
+    源码态没有"应用仓库根"这一层了，``<安装目录>/tools`` 对应的就是 ``link/tools``，
+    所以这里退回 ``PYTHON_DIR``（= ``link/``）而不是仓库根；CLI 侧保持原样即可。
+    """
 
     if getattr(sys, "frozen", False):
         # <install>/resources/python/omni.exe -> <install>
         return os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.abspath(sys.executable)))
         )
-    return os.environ.get("OMNI_APP_DIR") or REPO_ROOT
+    return os.environ.get("OMNI_APP_DIR") or PYTHON_DIR
 
 
 def shared_root() -> str:

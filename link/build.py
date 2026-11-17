@@ -3,15 +3,19 @@
 Build script: package the Python backend into a standalone executable using PyInstaller.
 
 Usage:
-    python build.py                    # Build using current Python
-    python build.py --clean            # Clean build artifacts before building
-    python build.py --python PATH      # Use specific Python executable
+    python link/build.py                       # 输出 <repo>/dist/link/omni-backend/
+    python link/build.py --clean               # 先清理旧产物
+    python link/build.py --python PATH         # 指定解释器
+    python link/build.py --out <dir>           # 指定输出根目录（默认 <repo>/dist/link）
 
 Output:
-    dist/omni-backend/omni-backend.exe   # Backend executable (Windows)
+    <out>/omni-backend/omni-backend.exe        # Backend executable (Windows)
 
-CLI（omni.exe）不再由本脚本构建：它来自 vendor/omni-cli 子模块的
-scripts/build-exe.ps1，由 build.ps1 调用并拷到 dist/omni.exe。
+产物目录名与 exe 名（``omni-backend``）保持不变：GUI 安装包的 ``extraResources``
+（``python/dist/omni-backend`` → ``resources/python``）与 NSIS 逻辑因此无需改动。
+
+CLI（omni.exe）不再由本脚本构建：它来自 omni-cli 仓库的
+``scripts/build-exe.ps1``，由 GUI 仓库的 build.ps1 调用并拷到 dist/omni.exe。
 """
 import argparse
 import os
@@ -23,13 +27,25 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-BACKEND_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = BACKEND_DIR.parent
-DIST_DIR = BACKEND_DIR / "dist"
-BUILD_DIR = BACKEND_DIR / "build"
+BACKEND_DIR = Path(__file__).resolve().parent          # <repo>/link
+REPO_ROOT = BACKEND_DIR.parent                          # <repo>
+COMMON_DIR = REPO_ROOT / "common"
 
 ENTRY_SCRIPT = BACKEND_DIR / "server.py"
 APP_NAME = "omni-backend"
+
+# 输出目录（默认 <repo>/dist/link），可被 --out 覆盖
+DIST_DIR = REPO_ROOT / "dist" / "link"
+BUILD_DIR = DIST_DIR / "work"
+SPEC_DIR = DIST_DIR / "spec"
+
+
+def set_output_dir(out: str | None) -> None:
+    """解析并设置输出目录（--out 指向的目录就是 dist 根，产物在其下的 APP_NAME/）。"""
+    global DIST_DIR, BUILD_DIR, SPEC_DIR
+    DIST_DIR = Path(out).resolve() if out else REPO_ROOT / "dist" / "link"
+    BUILD_DIR = DIST_DIR / "work"
+    SPEC_DIR = DIST_DIR / "spec"
 
 # Required runtime packages that must be importable by the building Python.
 # 注意：pyocd 是内置源码（python/pyocd/），check_package 会把 BACKEND_DIR 加入
@@ -186,9 +202,19 @@ def check_source_encoding(root: Path = BACKEND_DIR) -> list[str]:
     return problems
 
 
-def report_source_encoding(root: Path = BACKEND_DIR) -> bool:
-    """执行源码编码检查并打印结果（通过返回 True）。"""
-    problems = check_source_encoding(root)
+def report_source_encoding(roots: tuple[Path, ...] | None = None) -> bool:
+    """执行源码编码检查并打印结果（通过返回 True）。
+
+    默认检查本服务（link/）与共享包（common/）：两者都会进产物。
+    """
+    if roots is None:
+        roots = (BACKEND_DIR, COMMON_DIR)
+    problems: list[str] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        prefix = "" if root == BACKEND_DIR else f"{root.name}/"
+        problems.extend(prefix + p for p in check_source_encoding(root))
     if problems:
         log(f"ERROR: 源码编码检查失败（{len(problems)} 处）")
         for item in problems[:20]:
@@ -282,14 +308,13 @@ def ensure_pyinstaller(python_exe: str):
 
 
 def clean():
-    """Remove previous build artifacts."""
-    for d in [DIST_DIR, BUILD_DIR]:
+    """Remove previous build artifacts（只动输出目录，不碰源码）。"""
+    for d in [BUILD_DIR, SPEC_DIR, DIST_DIR / APP_NAME]:
         if d.exists():
             log(f"Cleaning {d}")
             shutil.rmtree(d)
-    spec_file = BACKEND_DIR / f"{APP_NAME}.spec"
-    if spec_file.exists():
-        spec_file.unlink()
+    for stale in list(SPEC_DIR.glob("*.spec")) if SPEC_DIR.exists() else []:
+        stale.unlink()
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +338,10 @@ def build(python_exe: str):
         "--collect-all", "libusb_package",
     ]
 
+    # 输出/工作/spec 目录都落在输出根下，避免污染源码目录
+    for d in (DIST_DIR, BUILD_DIR, SPEC_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
     # Assemble the PyInstaller command
     cmd = [
         python_exe, "-m", "PyInstaller",
@@ -321,7 +350,7 @@ def build(python_exe: str):
         "--console",
         f"--distpath={DIST_DIR}",
         f"--workpath={BUILD_DIR}",
-        f"--specpath={BACKEND_DIR}",
+        f"--specpath={SPEC_DIR}",
         *datas,
         *collect_args,
     ]
@@ -329,8 +358,9 @@ def build(python_exe: str):
     for imp in HIDDEN_IMPORTS:
         cmd.extend(["--hidden-import", imp])
 
-    # Add the backend dir to the Python path for PyInstaller
+    # 让 PyInstaller 能 import 本服务（link/）与共享包（common/）
     cmd.extend(["--paths", str(BACKEND_DIR)])
+    cmd.extend(["--paths", str(REPO_ROOT)])
     cmd.append(str(ENTRY_SCRIPT))
 
     log("Running PyInstaller...")
@@ -374,10 +404,16 @@ def main():
         help="Path to Python executable to use (default: current interpreter)",
     )
     parser.add_argument(
+        "--out", default=None,
+        help=f"输出根目录（产物在 <out>/{APP_NAME}/），默认 <repo>/dist/link",
+    )
+    parser.add_argument(
         "--check-sources", action="store_true",
         help="Only run the source encoding check (UTF-8 / no U+FFFD); do not build",
     )
     args = parser.parse_args()
+
+    set_output_dir(args.out)
 
     if args.clean:
         clean()

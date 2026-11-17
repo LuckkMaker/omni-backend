@@ -23,8 +23,8 @@ from __future__ import annotations
 import os
 import sys
 
-PY_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, PY_DIR)
+LINK_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, LINK_DIR)
 
 from core.elf_backend import ElfBackend
 from pyocd.debug.elf.decoder import _line_source_of, _line_table_index_base

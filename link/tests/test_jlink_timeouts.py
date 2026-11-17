@@ -21,8 +21,8 @@ import sys
 import threading
 import time
 
-PY_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, PY_DIR)
+LINK_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, LINK_DIR)
 
 import core.jlink_lock as jl  # noqa: E402
 from core.pyocd_backend import PyOCDBackend, ProbeState  # noqa: E402

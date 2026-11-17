@@ -15,6 +15,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 def _infer_log_source(message: str) -> str:
     """根据日志消息内容推断来源页面"""
     msg = message or ""
+    if "USB" in msg or "usb" in msg:
+        return "usb"
     if "Serial" in msg or "串口" in msg:
         return "serial"
     if "Network" in msg or "网络" in msg:

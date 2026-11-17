@@ -1,0 +1,52 @@
+# ── Python ───────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ── 构建产物 ─────────────────────────────
+dist/
+build/
+*.spec
+*.spec.bak
+
+# ── 运行期数据（用户生成，不纳入版本控制）──
+link/data/devices.db
+link/data/devices.db-wal
+link/data/devices.db-shm
+link/data/packs/installed_packs.json
+*.pack
+
+# ── 日志 / 临时文件 ──────────────────────
+*.log
+_out.txt
+*.tmp
+*.bak
+*~
+
+# ── 环境配置（可能含本机绝对路径）────────
+.env
+.env.*
+!/.env.example
+
+# ── IDE / OS ────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*.iml
+.DS_Store
+Thumbs.db
+Desktop.ini

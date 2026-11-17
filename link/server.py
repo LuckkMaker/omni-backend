@@ -2,13 +2,23 @@
 # Copyright (c) 2026 LuckkMaker
 # SPDX-License-Identifier: MIT
 """
-OMNI Link - Python 后端入口
+OMNI Link - Python 后端入口（omni-backend 仓库的 link 服务）
 
-启动 FastAPI 服务器，通过 stdout 输出端口信息供 Electron 主进程读取。
+启动 FastAPI 服务器，通过 stdout 输出端口信息供 Electron 主进程 / omni-cli 读取。
 启动时自动初始化探针热插拔监控。
+
+本服务只依赖同仓库的 ``common``（登记表 / health / 优雅关停），
+**不 import bus**，两个后端始终是两个独立进程。
 """
 
 import sys
+from pathlib import Path
+
+# 仓库根：<repo>/link/server.py -> <repo>
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import os
 import json
 import atexit
@@ -17,7 +27,6 @@ import argparse
 import logging
 import uvicorn
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from api import probes, flash, targets, files, devices, commander, rtt, tools, monitor, system, packs, zone
@@ -30,10 +39,12 @@ from core.pyocd_backend import backend
 # CLI 已拆到 vendor/omni-cli 子模块，后端不再 import omni_cli（core/toolchain.py 是同源副本）。
 from core import toolchain
 
-# 后端版本号（与前端 package.json 保持一致）
-BACKEND_VERSION = "0.3.1"
+from common import omni_service
 
-# CLI ↔ 后端协议版本（只增不改语义；见 omni-cli/docs/backend-protocol.md）
+# 后端版本号（link 服务独立发版：link-vX.Y.Z）
+BACKEND_VERSION = "0.3.2"
+
+# CLI ↔ 后端协议版本（只增不改语义；见 docs/protocol.md）
 PROTOCOL_VERSION = 1
 SERVICE_NAME = "link"
 
@@ -41,60 +52,13 @@ logger = logging.getLogger("omni-link")
 
 
 # ---------------------------------------------------------------------------
-# 共享后端注册表
+# 共享后端注册表（common/omni_service.py）
 #
-# 后端启动后把 {pid, port} 写入一个用户级、跨安装布局都相同的文件，任何调用方
-# （CLI `omni`、其他工具）都能据此发现并复用**同一个**后端进程，而不会各自再拉起
-# 一个后端去抢同一探针。路径计算必须与 CLI 侧 omni_cli/config.py 的
-# _state_dir 保持一致。
+# 后端启动后把 {service, pid, host, port, version, protocol} 写入用户级目录
+# （%LOCALAPPDATA%\omni-link\backend.json 或 OMNI_STATE_DIR），任何调用方
+# （CLI `omni`、其他工具）都能据此发现并复用**同一个**后端进程，而不会各自
+# 再拉起一个后端去抢同一探针。状态目录的计算方式必须与 omni-cli 保持一致。
 # ---------------------------------------------------------------------------
-def _state_dir() -> str:
-    env = os.environ.get("OMNI_STATE_DIR")
-    if env:
-        return env
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    else:
-        base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
-    return os.path.join(base, "omni-link")
-
-
-def shared_runtime_file() -> str:
-    return os.path.join(_state_dir(), "backend.json")
-
-
-def publish_runtime(host: str, port: int) -> None:
-    """写入共享注册表，供 CLI 等外部进程发现本后端。"""
-    path = shared_runtime_file()
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        data = {
-            "pid": os.getpid(),
-            "host": host,
-            "port": port,
-            "version": BACKEND_VERSION,
-            "service": SERVICE_NAME,
-            "protocol": PROTOCOL_VERSION,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-        }
-        tmp = f"{path}.{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
-    except Exception as e:
-        logger.warning(f"Failed to publish backend runtime file: {e}")
-
-
-def unpublish_runtime() -> None:
-    """进程退出时删除注册表；仅当记录仍指向本进程时才删，避免误删后启动的后端。"""
-    path = shared_runtime_file()
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if data.get("pid") == os.getpid():
-            os.remove(path)
-    except Exception:
-        pass
 
 
 @asynccontextmanager
@@ -175,6 +139,9 @@ app.include_router(tools.router, prefix="/api", tags=["tools"])
 app.include_router(zone.router, prefix="/api", tags=["zone"])
 app.include_router(omni_tool_router.router, prefix="/api", tags=["omni-tool"])
 
+# POST /api/system/shutdown：由 common 统一实现（含看门狗）
+omni_service.install_shutdown(app, SERVICE_NAME)
+
 
 # WebSocket 端点
 @app.websocket("/ws")
@@ -184,21 +151,19 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/api/health")
 async def health():
-    return {
-        "status": "ok",
-        "pid": os.getpid(),
-        "ws_connections": event_manager.connection_count,
-        "service": SERVICE_NAME,
-        "protocol": PROTOCOL_VERSION,
-    }
+    return omni_service.health_payload(
+        SERVICE_NAME,
+        BACKEND_VERSION,
+        PROTOCOL_VERSION,
+        ws_connections=event_manager.connection_count,
+    )
 
 
 def dev_config_candidates() -> list[str]:
     """开发态端口配置文件的候选路径（按优先级）。
 
     1. ``OMNI_DEV_CONFIG`` 显式指定的文件；
-    2. 后端目录自身的 ``backend.config.json``（后端独立成仓后的布局：
-       ``link/backend.config.json``）；
+    2. 后端目录自身的 ``backend.config.json``（本仓库布局：``link/backend.config.json``）；
     3. 上一级目录的 ``backend.config.json``（旧布局：后端在 ``<应用仓库>/python``，
        配置放在应用仓库根）。
     """
@@ -215,7 +180,7 @@ def dev_config_candidates() -> list[str]:
 def load_config_port():
     """读取开发态后端端口，未配置则返回 None（由调用方自动分配）。
 
-    后端不再假设“当前目录是应用仓库根”，配置一律按 ``__file__`` 定位；
+    后端不假设“当前目录是应用仓库根”，配置一律按 ``__file__`` 定位；
     全部候选都不存在/非法时返回 None，即自动分配端口。
     """
     for config_path in dev_config_candidates():
@@ -278,12 +243,14 @@ def main():
         actual_port = sock.getsockname()[1]
         sock.close()
 
-    # 输出端口信息（Electron 主进程读取此行）
+    # 输出端口信息（Electron 主进程 / CLI 读取此行）
     print(json.dumps({"port": actual_port}), flush=True)
 
     # 共享注册表：让 CLI 等外部进程能发现并复用本后端（退出时自动清理）
-    publish_runtime(args.host, actual_port)
-    atexit.register(unpublish_runtime)
+    omni_service.publish_runtime(
+        SERVICE_NAME, BACKEND_VERSION, PROTOCOL_VERSION, args.host, actual_port
+    )
+    atexit.register(omni_service.unpublish_runtime, SERVICE_NAME)
 
     # 使用 uvicorn 运行
     config = uvicorn.Config(

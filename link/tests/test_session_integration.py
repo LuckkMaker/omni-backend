@@ -5,7 +5,7 @@ import sys
 import tempfile
 import types
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # mock core 依赖
 fake_backend = types.ModuleType("core.pyocd_backend")

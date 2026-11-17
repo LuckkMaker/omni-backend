@@ -14,7 +14,7 @@ sys.modules["core.pyocd_backend"] = fake_backend
 sys.modules["core.events"] = fake_events
 
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.monitor_backend import MonitorBackend, MonitoredVariable
 
 
