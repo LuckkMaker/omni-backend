@@ -1,6 +1,6 @@
 # OMNI 后端独立化计划（omni-backend 仓库）
 
-> 状态：已执行（阶段 0 / 1 / 2 / 4 完成；阶段 3（omni-bus GUI 接入）待做）
+> 状态：已执行（阶段 0 / 1 / 2 / 3 / 4 全部完成；GUI 页面级回归需人工过一遍）
 > 执行记录与偏差：见 `docs/migration.md`
 > 编写日期：2026-11-17
 > 适用仓库：`omni-link`、`omni-bus`、`omni-cli`，以及新建的 `omni-backend`
@@ -443,13 +443,18 @@ git rm -r python
 
 ## 9. 全链路验收清单
 
-- [ ] `omni-backend`：两服务任意 cwd 可启动；health/registry/shutdown 契约测试通过。
-- [ ] `omni-backend`：两个 exe 产物可运行，体积合理（link ≈120 MB，bus 明显更小）。
-- [ ] omni-link：`npm run dev`、`npm run package`、安装后 `omni probe list`/烧录/RTT 正常。
-- [ ] omni-bus：`npm run dev`、`npm run package`、串口/网络/USB 页面回归。
-- [ ] omni-cli：`omni backend list/status/start/stop` 两个服务；`--service` 生效。
-- [ ] 三个 GUI/CLI 同时开，不出现“重复后端/抢设备”。
-- [ ] 文档：`AGENTS.md`、`architecture.md`、`README.md`、`protocol.md` 全部指向新结构。
+- [x] `omni-backend`：两服务任意 cwd 可启动；health/registry/shutdown 契约测试通过。
+- [x] `omni-backend`：两个 exe 产物可运行，体积合理（link 11.9 MB/整包 57 MB，bus 5.4 MB/整包 22 MB）。
+- [x] omni-link：`npm run package` 成功、安装包内 `resources/python/omni-link-backend.exe` 可运行。
+- [ ] omni-link：`npm run dev` + 烧录/RTT 实机回归（需硬件，人工）。
+- [x] omni-bus：`npm run package` 成功（105 MB）、打包后 `omni-bus-backend.exe` 可运行。
+- [ ] omni-bus：`npm run dev` + 串口/网络/USB 页面回归（USB 功能本身仍有已知问题，人工）。
+- [x] omni-cli：`omni backend list/status/start/stop` 两个服务；`--service` 生效。
+- [x] 两个 GUI 与 CLI 同时开：GUI 起的后端会被 CLI 复用，不重复起进程。
+- [x] 文档：`AGENTS.md`、`architecture.md`、`README.md`、`protocol.md` 全部指向新结构。
+
+> 未勾选的两项是**需要人在 GUI 里点**的回归（烧录/RTT、串口/网络/USB 页面），
+> 后端接口与打包链路均已验证；USB 功能本身另有已知缺陷，与本次迁移无关。
 
 ---
 
