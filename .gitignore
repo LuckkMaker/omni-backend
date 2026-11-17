@@ -50,3 +50,9 @@ _out.txt
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# ── link 的运行时数据（用户生成，不能进版本库）──
+# .omnilink_migrated 是"旧 XML 已迁移"的一次性标记，user-devices.xml 是用户设备库；
+# 两者都在 link/data/ 下（开发态默认数据目录），随首次启动自动生成。
+link/data/.omnilink_migrated
+link/data/user-devices.xml
