@@ -268,6 +268,23 @@ omni_cli/
 
 **建议顺序：M0 → M1 → M2 → M3 → M4**。M1 先落地是为了尽早验证 CLI 的会话/游标约定，且后端已具备、风险最低；M2 是 M3/M4 的公共依赖，紧随其后。
 
+### 5.1 真机验证记录（2026-11-18，STM32F407IG + J-Link）
+
+| 例程 | 命令 | 结果 |
+| --- | --- | --- |
+| `usbd_winusb` | `usb winusb list/info/open` | 枚举到 `C251:0002`，full speed，2 个 bulk 端点（0x01 OUT / 0x81 IN） |
+| | `usb winusb control --request 0x06 --value 0x0100 --length 18` | 返回设备描述符 `12 01 10 02 ...` |
+| | `usb winusb write/read` | 写入 `01 02 03 04` 后原样读回 |
+| | `usb winusb echo --size 64 --count 100` | 0 不一致，约 100 KiB/s |
+| | `usb winusb echo --size 512 --count 5 --pipeline 32` | **按预期失败**（`usbd_winusb` 单缓冲，RX 只在 IN 完成回调里重装） |
+| `usbd_hid_custom` | `usb hid list/open/write/read` | 枚举 `C251:0001`，IN/OUT 64 字节；写 report id 1 × 64B 成功；读到设备周期上报的 64B 报告 |
+| `usbd_cdc_acm` | `usb cdc list/open/send/read/break` | 枚举为 `COM73`；发送 `hello omni` 后回显；BREAK 100 ms 成功 |
+
+踩到的两个坑（已修）：
+
+1. `WinUsb_Initialize` 要求接口句柄以 `FILE_FLAG_OVERLAPPED` 打开，否则失败且 `GetLastError` 为 0；
+2. `WinUsb_QueryDeviceInformation(DEVICE_SPEED)` 的 length 必须是 1，返回 1=full / 3=high（不是 0..3 的速度枚举）。
+
 ## 6. 关键设计决策与风险
 
 | 决策/风险 | 处理 |

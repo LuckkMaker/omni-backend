@@ -37,12 +37,16 @@ FILE_SHARE_WRITE = 0x02
 OPEN_EXISTING = 3
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
+#: WinUsb_Initialize 要求接口句柄以 overlapped 方式打开（否则返回 ERROR_INVALID_HANDLE）
+FILE_ATTRIBUTE_NORMAL = 0x80
+FILE_FLAG_OVERLAPPED = 0x40000000
+
 DEVICE_SPEED = 0x01
 PIPE_TRANSFER_TIMEOUT = 0x03
 USB_DEVICE_DESCRIPTOR_TYPE = 0x01
 
 PIPE_TYPES = {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}
-SPEED_NAMES = {0: "low", 1: "full", 2: "high", 3: "super"}
+SPEED_NAMES = {1: "full", 3: "high"}
 
 #: 本仓示例（usbd_winusb）与 Keil WinUSB_Echo 的接口 GUID
 DEFAULT_GUIDS = [
@@ -279,7 +283,7 @@ class WinUsbLibrary:
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             None,
             OPEN_EXISTING,
-            0,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
             None,
         )
         if not handle or handle == INVALID_HANDLE_VALUE:
@@ -334,12 +338,13 @@ def _describe(lib: WinUsbLibrary, path: str, guid: str) -> WinUsbDevice:
         else:
             bcd_usb = vid = pid = bcd_device = 0
 
-        speed_value = ctypes.c_ulong(0)
+        speed_length = ctypes.c_ulong(1)
+        speed_byte = ctypes.c_ubyte(0)
         speed = "unknown"
         if lib.winusb.WinUsb_QueryDeviceInformation(
-            winusb_handle, DEVICE_SPEED, ctypes.byref(speed_value), ctypes.byref(ctypes.c_ulong(1))
+            winusb_handle, DEVICE_SPEED, ctypes.byref(speed_length), ctypes.byref(speed_byte)
         ):
-            speed = SPEED_NAMES.get(int(speed_value.value), f"unknown({speed_value.value})")
+            speed = SPEED_NAMES.get(int(speed_byte.value), f"unknown({speed_byte.value})")
 
         interface = USB_INTERFACE_DESCRIPTOR()
         if not lib.winusb.WinUsb_QueryInterfaceSettings(
