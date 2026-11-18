@@ -16,6 +16,7 @@
 """
 
 import asyncio
+import locale
 import logging
 import platform
 import re
@@ -91,6 +92,9 @@ def _parse_target(target: str) -> tuple[str | None, int | None]:
 # ── TCP Server 后端 ──────────────────────────────────────────
 
 
+from core.net_capture import CAPTURE_MAX_READ, NetCapture
+
+
 class TcpServerBackend:
     """基于 asyncio 的 TCP Server
 
@@ -109,6 +113,8 @@ class TcpServerBackend:
         self._auto_send_data: bytes = b""
         self._auto_send_targets: list[str] | None = None
         self._auto_send_interval: float = 1.0
+        # ── 接收环形缓存（REST/CLI 增量读取，与 WebSocket 推送并存） ──
+        self._capture = NetCapture()
 
     @property
     def running(self) -> bool:
@@ -264,6 +270,7 @@ class TcpServerBackend:
         client = self._clients.get(client_id)
         if client is not None:
             client["rx"] += len(data)
+        self._capture.append(data, peer=addr)
         self._event_manager.emit("network.data", {
             "clientId": client_id,
             "addr": addr,
@@ -380,7 +387,21 @@ class TcpServerBackend:
             "port": self._port,
             "clientCount": len(self._clients),
             "clients": self.clients(),
+            "capture": self._capture.stats(),
         }
+
+    def read_capture(self, since: int = 0, max_bytes: int | None = None,
+                     peer: str | None = None) -> dict:
+        """按 seq 游标增量读取接收缓冲（供 REST / CLI）。
+
+        服务停止后缓存仍在，可按游标回看已收到的数据（与 serial 一致）。
+        ``peer`` 可只取某个连接的数据（形如 ``192.168.1.101:52036``）。
+        """
+        result = self._capture.read(since=since,
+                                    max_bytes=max_bytes or CAPTURE_MAX_READ,
+                                    peer=peer)
+        result.update({"success": True, "running": self.running, "kind": "tcp-server"})
+        return result
 
     def clients(self) -> list[dict]:
         return [
@@ -409,6 +430,23 @@ class TcpServerBackend:
 _IS_WINDOWS = platform.system() == "Windows"
 
 _RE_TIME = re.compile(r"(?:time|时间)\s*[=<]\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
+
+
+def _decode_console(raw: bytes) -> str:
+    """解码系统命令的控制台输出。
+
+    Windows 中文 locale 下 ping/ipconfig 输出是 GBK；用 utf-8 + errors="ignore"
+    会把「时间」等汉字整段吞掉，正则匹配不到，时延统计就会全空。
+    按「系统首选编码 → utf-8 → gbk」依次尝试，全部失败再降级忽略错误。
+    """
+    for enc in (locale.getpreferredencoding(False), "utf-8", "gbk"):
+        if not enc:
+            continue
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="ignore")
 _RE_TTL = re.compile(r"[Tt]{2}[Ll]\s*=\s*(\d+)")
 
 
@@ -429,6 +467,8 @@ class PingBackend:
         self._received = 0
         self._times: list[float] = []
         self._stopped = False
+        #: 最近一次 ping 的汇总结果（未跑过为 None）
+        self._last_result: dict | None = None
 
     @property
     def running(self) -> bool:
@@ -512,7 +552,7 @@ class PingBackend:
                 line = await proc.stdout.readline()
                 if not line:
                     break
-                self._parse_line(line.decode(errors="ignore").strip())
+                self._parse_line(_decode_console(line).strip())
             await proc.wait()
         except asyncio.CancelledError:
             raise
@@ -591,12 +631,28 @@ class PingBackend:
             "stopped": self._stopped,
             "timestamp": _now(),
         }
+        # 记录最近一次结果，供 CLI `omni net ping --last` 与 status 查询
+        self._last_result = dict(done)
         # host 若已重置则不推送
         self._event_manager.emit("network.ping.done", done)
         self._event_manager.log("info", "Network Ping 结束")
 
     def status(self) -> dict:
-        return {"running": self.running, "host": self._host}
+        """Ping 状态 + 进行中统计 + 最近一次汇总。"""
+        times = self._times
+        return {
+            "running": self.running,
+            "host": self._host,
+            "sent": self._sent,
+            "received": self._received,
+            "lost": self._sent - self._received,
+            "lossPct": round((self._sent - self._received) / self._sent * 100, 1)
+                       if self._sent else 0.0,
+            "min": min(times) if times else None,
+            "max": max(times) if times else None,
+            "avg": round(sum(times) / len(times), 2) if times else None,
+            "last": self._last_result,
+        }
 
 
 class TcpClientBackend:
@@ -623,6 +679,8 @@ class TcpClientBackend:
         self._auto_send_task: asyncio.Task | None = None
         self._auto_send_data: bytes = b""
         self._auto_send_interval: float = 1.0
+        # ── 接收环形缓存（REST/CLI 增量读取，与 WebSocket 推送并存） ──
+        self._capture = NetCapture()
 
     @property
     def running(self) -> bool:
@@ -706,6 +764,7 @@ class TcpClientBackend:
                 if not data:
                     break
                 self._rx += len(data)
+                self._capture.append(data, peer=addr_str)
                 self._event_manager.emit("network.tcpclient.data", {
                     "direction": "rx",
                     "data": data.hex().upper(),
@@ -795,7 +854,17 @@ class TcpClientBackend:
             "rx": self._rx,
             "tx": self._tx,
             "connectedAt": self._connected_at,
+            "capture": self._capture.stats(),
         }
+
+    def read_capture(self, since: int = 0, max_bytes: int | None = None,
+                     peer: str | None = None) -> dict:
+        """按 seq 游标增量读取接收缓冲（供 REST / CLI）。"""
+        result = self._capture.read(since=since,
+                                    max_bytes=max_bytes or CAPTURE_MAX_READ,
+                                    peer=peer)
+        result.update({"success": True, "running": self._connected, "kind": "tcp-client"})
+        return result
 
     def _emit_status(self):
         self._event_manager.emit("network.tcpclient.status", {
@@ -846,6 +915,8 @@ class UdpBackend:
         self._auto_send_data: bytes = b""
         self._auto_send_targets: list[str] = []
         self._auto_send_interval: float = 1.0
+        # ── 接收环形缓存（REST/CLI 增量读取，与 WebSocket 推送并存） ──
+        self._capture = NetCapture()
 
     @property
     def running(self) -> bool:
@@ -913,6 +984,7 @@ class UdpBackend:
             return
         self._rx += len(data)
         addr_str = f"{addr[0]}:{addr[1]}" if isinstance(addr, tuple) else str(addr)
+        self._capture.append(data, peer=addr_str)
         self._event_manager.emit("network.udp.data", {
             "direction": "rx",
             "data": data.hex().upper(),
@@ -1027,7 +1099,17 @@ class UdpBackend:
             "localPort": self._local_port,
             "rx": self._rx,
             "tx": self._tx,
+            "capture": self._capture.stats(),
         }
+
+    def read_capture(self, since: int = 0, max_bytes: int | None = None,
+                     peer: str | None = None) -> dict:
+        """按 seq 游标增量读取接收缓冲（供 REST / CLI）。"""
+        result = self._capture.read(since=since,
+                                    max_bytes=max_bytes or CAPTURE_MAX_READ,
+                                    peer=peer)
+        result.update({"success": True, "running": self.running, "kind": "udp"})
+        return result
 
     def _emit_status(self):
         self._event_manager.emit("network.udp.status", {

@@ -4,14 +4,17 @@
 提供本机地址枚举、TCP Server 启停/收发/踢出、Ping 启停与查询。
 """
 
+import asyncio
 import logging
+import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from core.events import event_manager
 from core import network_backend
 from core.tftp_backend import TftpServerBackend, TftpClientBackend
+from core.net_capture import CAPTURE_MAX_READ
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -22,6 +25,13 @@ udp = network_backend.UdpBackend(event_manager)
 ping = network_backend.PingBackend(event_manager)
 tftp_server = TftpServerBackend(event_manager)
 tftp_client = TftpClientBackend(event_manager)
+
+#: 有接收环形缓存的后端（kind 与 read_capture 返回的 kind 一致）
+CAPTURE_BACKENDS = {
+    "tcp-server": tcp_server,
+    "tcp-client": tcp_client,
+    "udp": udp,
+}
 
 
 # ── 请求模型 ──────────────────────────────────────────────
@@ -397,3 +407,67 @@ async def tftp_client_cancel():
 async def tftp_client_status():
     """TFTP 客户端状态与当前传输进度"""
     return tftp_client.status()
+
+
+# ── 接收缓冲的游标读取（CLI `omni net read` 的数据源） ──────────────
+
+class NetReadRequest(BaseModel):
+    """同步等读请求：等到有数据或超时，一次返回"""
+    kind: str = Field("tcp-client", description="tcp-server / tcp-client / udp")
+    since: int = Field(0, ge=0, description="起始 seq（0 = 从最旧可用数据开始）")
+    max_bytes: int = Field(65536, ge=1, description="单次返回的字节预算")
+    timeout_ms: int = Field(500, ge=0, le=30000, description="最长等待毫秒数")
+    peer: str | None = Field(None, description="只取该对端的数据（host:port，可选）")
+
+
+def _capture_backend(kind: str):
+    backend = CAPTURE_BACKENDS.get(kind)
+    if backend is None:
+        return None, {"success": False,
+                      "error": f"未知的网络类型 {kind!r}；可选: {', '.join(CAPTURE_BACKENDS)}"}
+    return backend, None
+
+
+@router.get("/data")
+async def read_data(
+    kind: str = Query(default="tcp-client", description="tcp-server / tcp-client / udp"),
+    since: int = Query(default=0, ge=0, description="起始 seq（0 = 从最旧可用数据开始）"),
+    max_bytes: int = Query(default=65536, ge=1, description="单次返回的字节预算"),
+    peer: str | None = Query(default=None, description="只取该对端的数据（host:port）"),
+):
+    """按 seq 游标增量读取网络接收缓冲。
+
+    返回契约与 link 的 RTT / bus 的串口一致（含 ``cursor``/``lost``/``session_reset``），
+    每批数据额外携带 ``peer``（对端 ``host:port``）。TCP Server 多客户端时可用
+    ``peer`` 只看其中一个连接。
+    """
+    backend, err = _capture_backend(kind)
+    if err:
+        return err
+    return await asyncio.to_thread(backend.read_capture, since,
+                                   min(max_bytes, CAPTURE_MAX_READ), peer)
+
+
+@router.post("/read")
+async def read_sync(req: NetReadRequest):
+    """同步等读：在 timeout_ms 内等待接收缓冲出现数据，首批到达即返回。
+
+    用于「发一条、收一条」的交互；超时返回空 chunks（不算错误）。
+    """
+    backend, err = _capture_backend(req.kind)
+    if err:
+        return err
+    deadline = time.monotonic() + req.timeout_ms / 1000.0
+
+    def _drain() -> dict:
+        while True:
+            result = backend.read_capture(req.since, min(req.max_bytes, CAPTURE_MAX_READ),
+                                          req.peer)
+            if not result.get("success") or result.get("chunks"):
+                return result
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return result
+            time.sleep(min(0.01, remaining))
+
+    return await asyncio.to_thread(_drain)
