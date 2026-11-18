@@ -134,6 +134,13 @@ CLI 不订阅 WebSocket（零第三方依赖），所有流式数据都用"后�
 | POST | `/api/usb/hid/read` | `{id, length?, timeout_ms?}` → 一条 Input 报告 |
 | POST | `/api/usb/hid/write` | `{id, hex|dataB64, report_id?, timeout_ms?}` |
 | POST | `/api/usb/hid/feature/get`、`/feature/set` | Feature 报告读写 |
+| GET | `/api/usb/winusb/devices` | 枚举绑定 WinUSB 的接口（可选 `guid=` 覆盖） |
+| POST | `/api/usb/winusb/open` | `{id, path?|vid?/pid?, interface?, timeout_ms?, guids?}` |
+| GET | `/api/usb/winusb/status`、POST `/close` | 会话状态 / 关闭 |
+| POST | `/api/usb/winusb/control` | `{id, request_type, request, value, index, length, hex?}` |
+| POST | `/api/usb/winusb/transfer` | `{id, pipe, direction: in|out, length?, hex?}` |
+| POST | `/api/usb/winusb/pipe` | `{id, pipe, action: abort|flush|reset}` |
+| POST | `/api/usb/winusb/echo` | `{id, out_pipe, in_pipe, size, count, pipeline, pattern, seed}` |
 
 USB 相关错误码（响应 `code` 字段，`success=false`）：
 
@@ -143,4 +150,5 @@ USB 相关错误码（响应 `code` 字段，`success=false`）：
 `pcap_parse_error`、`case_missing`、`case_invalid`、`case_not_found`、
 `case_too_large`、`case_read_failed`、`hid_unavailable`、`hid_not_found`、
 `hid_busy`、`hid_read_failed`、`hid_write_failed`、`hid_feature_failed`、
-`hid_invalid`。
+`hid_invalid`、`winusb_unavailable`、`winusb_not_found`、`winusb_open_failed`、
+`winusb_transfer_failed`、`winusb_invalid`。

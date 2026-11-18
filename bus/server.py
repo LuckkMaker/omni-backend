@@ -36,6 +36,7 @@ from api import usb
 from api import usb_descriptors
 from api import usb_hid
 from api import usb_tests
+from api import usb_winusb
 from core.events import event_manager
 
 from common import omni_service
@@ -88,6 +89,7 @@ app.include_router(usb.router, prefix="/api/usb", tags=["usb"])
 app.include_router(usb_descriptors.router, prefix="/api/usb/desc", tags=["usb"])
 app.include_router(usb_tests.router, prefix="/api/usb/test", tags=["usb"])
 app.include_router(usb_hid.router, prefix="/api/usb/hid", tags=["usb"])
+app.include_router(usb_winusb.router, prefix="/api/usb/winusb", tags=["usb"])
 
 # POST /api/system/shutdown：由 common 统一实现（含看门狗）
 omni_service.install_shutdown(app, SERVICE_NAME)

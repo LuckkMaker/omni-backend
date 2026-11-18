@@ -260,7 +260,7 @@ omni_cli/
 | **M2 描述符** | parse/validate/build/emit/template/from-capture；导出 hex/JSON | `usb_desc` 全量 + `api/usb_desc.py` | 8 个模板 round-trip；CDC 复合样本 `parse(build(x)) == x`；校验规则各有正反例 | 6–8 人日 |
 | **M3a CDC** | 枚举 USB CDC、open/send/read/status/close、BREAK | 复用 `serial_backend` + `/api/serial/break` | `omni usb cdc list` 只列 USB 串口；收发与 `omni serial` 同源 | ✅ 已完成 |
 | **M3b HID** | HID 枚举、open、Input/Output/Feature 报告读写 | `core/usb_hid.py` + `api/usb_hid.py` + 命令 | `usb hid list/open/read/write/feature` 能对 `usbd_hid_custom` 收发报告 | ✅ 已完成 |
-| **M3c WinUSB** | SetupAPI 枚举、控制/批量/中断、pipe 控制、echo | `core/usb_winusb.py` + `api/usb_winusb.py` + 命令 | 接 `usbd_winusb` 跑通 list/info/control/read/write/echo --pipeline | 待做 |
+| **M3c WinUSB** | SetupAPI 枚举、控制/批量/中断、pipe 控制、echo | `core/usb_winusb.py` + `api/usb_winusb.py` + 命令 | 接 `usbd_winusb` 跑通 list/info/control/read/write/echo --pipeline | ✅ 已实现（链路/结构体测试通过，真机传输待接 `usbd_winusb` 验证） |
 | **M4a 测试（离线 pcap）** | 用例执行器、`expect` 断言、JSON/JUnit 报告、退出码 | `core/usb_test.py` + `api/usb_tests.py` + 命令 | 录制的 pcap 可断言传输/设备/描述符；失败停在首个断言；JUnit 可被 CI 消费 | ✅ 已完成 |
 | **M4b 测试（动作步骤）** | `control/write/read/echo` 步骤 + 吞吐/回环断言 | 依赖 M3 的宿主能力 | 同 M3，外加用例层断言 | 未开始 |
 
