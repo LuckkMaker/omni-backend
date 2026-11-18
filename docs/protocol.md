@@ -126,8 +126,6 @@ CLI 不订阅 WebSocket（零第三方依赖），所有流式数据都用"后�
 | POST | `/api/usb/desc/from-capture` | `{path, bus?, device?}` → 每设备一份文档 |
 | GET | `/api/usb/test/schema` | 用例格式示例 |
 | POST | `/api/usb/test/run` | `{case|path, junit?, stopOnFailure?}` → 步骤级报告 |
-| GET | `/api/usb/raw/doctor` | UsbDk 安装/服务/DLL/可用性诊断（spike） |
-| GET | `/api/usb/raw/devices` | UsbDk 可见设备列表（spike） |
 
 USB 相关错误码（响应 `code` 字段，`success=false`）：
 
@@ -135,4 +133,4 @@ USB 相关错误码（响应 `code` 字段，`success=false`）：
 `invalid_bufferlen`、`invalid_devices`、`desc_parse_failed`、`document_invalid`、
 `template_not_found`、`input_too_large`、`pcap_not_found`、`pcap_open_failed`、
 `pcap_parse_error`、`case_missing`、`case_invalid`、`case_not_found`、
-`case_too_large`、`case_read_failed`、`usbdk_unavailable`。
+`case_too_large`、`case_read_failed`。

@@ -34,7 +34,6 @@ from api import modbus
 from api import network
 from api import usb
 from api import usb_descriptors
-from api import usb_raw
 from api import usb_tests
 from core.events import event_manager
 
@@ -87,7 +86,6 @@ app.include_router(network.router, prefix="/api/network", tags=["network"])
 app.include_router(usb.router, prefix="/api/usb", tags=["usb"])
 app.include_router(usb_descriptors.router, prefix="/api/usb/desc", tags=["usb"])
 app.include_router(usb_tests.router, prefix="/api/usb/test", tags=["usb"])
-app.include_router(usb_raw.router, prefix="/api/usb/raw", tags=["usb"])
 
 # POST /api/system/shutdown：由 common 统一实现（含看门狗）
 omni_service.install_shutdown(app, SERVICE_NAME)

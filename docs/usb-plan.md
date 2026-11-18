@@ -1,6 +1,6 @@
 # USB 能力实施计划（backend + CLI，Windows）
 
-> 状态：草案 v1（M0–M2 完成；**M3 请求暂停，先做可行性论证**，见 [usb-raw-access.md](usb-raw-access.md)；M4a 离线用例已完成；UsbDk spike 第一期已落地：检测/枚举/绑定）  
+> 状态：草案 v1（M0–M2 完成；**M3 请求暂停，先做可行性论证**，见 [usb-raw-access.md](usb-raw-access.md)；M4a 离线用例已完成）  
 > 范围：`omni-backend/bus` 后端 + `omni-cli` 命令组  
 > 不在范围：GUI、Linux/macOS、主机侧等时传输、USB-IF 合规测试、固件代码生成
 
