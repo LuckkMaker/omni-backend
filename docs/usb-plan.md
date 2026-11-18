@@ -1,6 +1,6 @@
 # USB 能力实施计划（backend + CLI，Windows）
 
-> 状态：草案 v1（M0–M2 完成；M4a 离线用例完成；M3 请求拆分为 CDC/HID/WinUSB 三条通道，CDC 与 HID 已完成，WinUSB 待做）  
+> 状态：**已完成**（M0–M4b 全部落地：描述符、抓包、CDC/HID/WinUSB 三条请求通道、离线+真机回归用例；仅原始访问与 replay 等长期项未做）  
 > 范围：`omni-backend/bus` 后端 + `omni-cli` 命令组  
 > 不在范围：GUI、Linux/macOS、主机侧等时传输、USB-IF 合规测试、固件代码生成
 
@@ -75,7 +75,7 @@ bus/
 - **零新增第三方依赖**。枚举/传输继续用 `ctypes` 直调 `setupapi.dll` / `winusb.dll`（`winusb_test.py` 已在真机验证），打包脚本 `bus/build.py` 的 `REQUIRED_PACKAGES` 不变。
 - 阻塞调用不能占住事件循环：所有 WinUSB 传输放进**独立工作线程 + 每次调用超时**，API 用 `run_in_threadpool` 等待；退出时 `WinUsb_AbortPipe` 兜底。
 - **一份描述符解析**：`usb_decode.py` 里现有的 `parse_device_descriptor` / `parse_config_descriptor` 收敛进 `usb_desc`，抓包解码与 CLI 共用，禁止第三份实现。omni-emb 的 `utilities/scripts/usb_parse` 不再演进，脚本里的解析规则（CDC functional descriptor 等）一次性搬过来后即可停用。
-- 抓包与请求**同进程共存**：USBPcap 是 root hub 过滤驱动，不独占设备，WinUSB 打开同一设备时仍能抓到 URB——这是「发一条请求，立刻在抓包里看到」的前提，M3 首次联调时实测确认。
+- 抓包与请求**同进程共存**：USBPcap 是 root hub 过滤驱动，不独占设备，WinUSB 打开同一设备时仍能抓到 URB——这是「发一条请求，立刻在抓包里看到」的前提（已由 `--capture` 联动实现；真机验证需管理员终端）。
 
 ### 2.2 CLI（`omni-cli`）
 
@@ -260,7 +260,7 @@ omni_cli/
 | **M2 描述符** | parse/validate/build/emit/template/from-capture；导出 hex/JSON | `usb_desc` 全量 + `api/usb_desc.py` | 8 个模板 round-trip；CDC 复合样本 `parse(build(x)) == x`；校验规则各有正反例 | 6–8 人日 |
 | **M3a CDC** | 枚举 USB CDC、open/send/read/status/close、BREAK | 复用 `serial_backend` + `/api/serial/break` | `omni usb cdc list` 只列 USB 串口；收发与 `omni serial` 同源 | ✅ 已完成 |
 | **M3b HID** | HID 枚举、open、Input/Output/Feature 报告读写 | `core/usb_hid.py` + `api/usb_hid.py` + 命令 | `usb hid list/open/read/write/feature` 能对 `usbd_hid_custom` 收发报告 | ✅ 已完成 |
-| **M3c WinUSB** | SetupAPI 枚举、控制/批量/中断、pipe 控制、echo | `core/usb_winusb.py` + `api/usb_winusb.py` + 命令 | 接 `usbd_winusb` 跑通 list/info/control/read/write/echo --pipeline | ✅ 已实现（链路/结构体测试通过，真机传输待接 `usbd_winusb` 验证） |
+| **M3c WinUSB** | SetupAPI 枚举、控制/批量/中断、pipe 控制、echo | `core/usb_winusb.py` + `api/usb_winusb.py` + 命令 | 接 `usbd_winusb` 跑通 list/info/control/read/write/echo --pipeline | ✅ 已完成（真机验证：list/info/control/echo，pipeline 32 按预期失败） |
 | **M4a 测试（离线 pcap）** | 用例执行器、`expect` 断言、JSON/JUnit 报告、退出码 | `core/usb_test.py` + `api/usb_tests.py` + 命令 | 录制的 pcap 可断言传输/设备/描述符；失败停在首个断言；JUnit 可被 CI 消费 | ✅ 已完成 |
 | **M4b 测试（动作步骤）** | `control/write/read/echo` 步骤 + 真机用例 | 依赖 M3 的宿主能力 | 三个通道各有一条真机用例通过；失败时停在首个断言并输出 JUnit | ✅ 已完成 |
 

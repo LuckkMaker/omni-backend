@@ -1,25 +1,13 @@
-"""USB 声明式回归用例执行器（M4a：离线 pcap）。
+"""USB 声明式回归用例执行器。
 
-用例是 JSON：一段离线抓包 + 一组 ``expect`` 断言，不依赖 WinUSB / USBPcap，
-可以直接进 CI（录制 pcap → 跑用例 → JSON / JUnit 报告）。
+用例可以只跑**离线 pcap 断言**，也可以跑**真机动作**（WinUSB/HID/CDC），
+或两者组合：动作执行完再用 pcap 核对总线上的结果。
 
-用例格式::
+- 离线断言：``transfers`` / ``transfer`` / ``device`` / ``errors`` / ``descriptor``
+- 真机动作：``open`` / ``control`` / ``write`` / ``read`` / ``echo`` / ``close``
+  （``device.channel = winusb | hid | cdc``），动作返回值用 ``expect`` 校验
 
-    {
-      "name": "enumeration-smoke",
-      "pcap": "C:/captures/enum.pcap",
-      "steps": [
-        {"name": "有传输",     "expect": {"transfers": {"atLeast": 1}}},
-        {"name": "看到设备描述符", "expect": {"transfer": {"type": "control",
-                                                    "summaryContains": "GET_DESCRIPTOR(DEVICE)"}}},
-        {"name": "设备身份",   "expect": {"device": {"vid": "0x1234", "pid": "0x5678"}}},
-        {"name": "无错误",     "expect": {"errors": {"atMost": 0}}},
-        {"name": "描述符合法", "expect": {"descriptor": {"ok": True}}}
-      ]
-    }
-
-M4b（需要 usb_host）会新增 ``control`` / ``write`` / ``read`` / ``echo`` 等**动作**
-步骤；本模块的步骤执行与报告结构保持不变。
+报告结构保持稳定，``to_junit`` 可直接给 CI。样例见 ``docs/examples/usb/*.json``。
 """
 
 from __future__ import annotations
@@ -211,7 +199,7 @@ def _run_step(index: int, step: Any, context: _Context) -> dict[str, Any]:
             )
         try:
             result = getattr(context.live, action)(step.get(action) or {})
-        except CaseError as exc:
+        except (CaseError, ValueError, TypeError) as exc:
             return _step_report(index, title or action, False, str(exc), started, action)
         if not isinstance(result, dict):
             result = {"success": False, "error": "动作返回了非法结果"}
@@ -301,11 +289,18 @@ def _assert_result(expect: Any, result: dict) -> tuple[bool, str]:
         ok = ok and passed
         details.append(f"length={int(result.get('length') or 0)}")
     if "hex" in expect:
-        passed = data_hex == _normalize_hex(expect["hex"])
+        try:
+            want = _normalize_hex(expect["hex"])
+        except ValueError as exc:
+            return False, f"期望的十六进制无效：{exc}"
+        passed = data_hex == want
         ok = ok and passed
         details.append(f"hex={'匹配' if passed else data_hex[:40]}")
     if "hexStartsWith" in expect:
-        prefix = _normalize_hex(expect["hexStartsWith"])
+        try:
+            prefix = _normalize_hex(expect["hexStartsWith"])
+        except ValueError as exc:
+            return False, f"期望的十六进制前缀无效：{exc}"
         passed = data_hex.startswith(prefix)
         ok = ok and passed
         details.append(f"hexStartsWith={'匹配' if passed else data_hex[:40]}")

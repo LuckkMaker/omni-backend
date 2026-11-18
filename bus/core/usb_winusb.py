@@ -608,12 +608,16 @@ class WinUsbSession:
         direction_in = bool(request_type & 0x80)
         if direction_in:
             buffer = (ctypes.c_ubyte * max(1, length))()
+            transfer_length = length
+            buffer_arg = ctypes.cast(buffer, ctypes.c_void_p) if length else None
         else:
             payload = data[:length] if length else data
             buffer = (ctypes.c_ubyte * max(1, len(payload))).from_buffer_copy(payload or b"\x00")
+            transfer_length = len(payload)
+            buffer_arg = ctypes.cast(buffer, ctypes.c_void_p) if transfer_length else None
         transferred = ctypes.c_ulong(0)
         if not self._lib.winusb.WinUsb_ControlTransfer(
-            self._winusb, setup, buffer, ctypes.sizeof(buffer),
+            self._winusb, setup, buffer_arg, transfer_length,
             ctypes.byref(transferred), None,
         ):
             raise WinUsbError("WinUsb_ControlTransfer 失败", ctypes.get_last_error())
