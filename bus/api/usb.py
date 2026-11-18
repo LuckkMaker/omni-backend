@@ -29,6 +29,12 @@ class CaptureStartRequest(BaseModel):
     device_id: str = Field(..., description="设备 ID，如 \\\\.\\USBPcap1")
     usbpcap_path: str | None = Field(None, description="USBPcapCMD.exe 路径覆盖")
     snaplen: int | None = Field(None, ge=64, le=16 * 1024 * 1024, description="快照长度")
+    bufferlen: int | None = Field(
+        None, ge=4096, le=134217728, description="USBPcap 内部缓冲字节数"
+    )
+    devices: str | None = Field(
+        None, description="只抓指定设备地址，逗号分隔，如 1,2,3"
+    )
 
 
 class CaptureSaveRequest(BaseModel):
@@ -58,7 +64,12 @@ async def capture_status():
 @router.post("/capture/start")
 async def capture_start(req: CaptureStartRequest):
     """开始实时捕获（需要 USBPcap 驱动与管理员授权）"""
-    return usb_manager.start(req.device_id, {"usbpcapPath": req.usbpcap_path, "snaplen": req.snaplen})
+    return usb_manager.start(req.device_id, {
+        "usbpcapPath": req.usbpcap_path,
+        "snaplen": req.snaplen,
+        "bufferlen": req.bufferlen,
+        "devices": req.devices,
+    })
 
 
 @router.post("/capture/stop")

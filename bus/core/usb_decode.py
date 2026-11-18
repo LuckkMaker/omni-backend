@@ -2,7 +2,8 @@
 
 本模块只做纯逻辑（不依赖 FastAPI / 文件系统），便于单元测试：
   - SETUP 包、标准/类请求、URB 状态名
-  - 设备/配置/接口/端点/字符串/BOS/IAD 描述符解析
+  - 描述符解析**委托** ``core/usb_desc.py``（唯一实现），本节只负责把模型
+    转成抓包页沿用的 dict 形状
   - CDC ACM、HID、MSC、DFU 的基础类解码
   - ``DescriptorCollector``: 从控制传输流中重建设备描述符树
 """
@@ -11,6 +12,8 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
+
+from core import usb_desc
 
 # ── 常量表 ────────────────────────────────────────────────
 
@@ -384,257 +387,198 @@ def _setup_summary(
     return " ".join(parts)
 
 
-# ── 描述符解析 ────────────────────────────────────────────
-
-def _parse_descriptor_chain(data: bytes) -> list[tuple[int, int, bytes]]:
-    """把配置描述符切成 (type, index, raw) 列表，防御 bLength=0"""
-    out: list[tuple[int, int, bytes]] = []
-    pos = 0
-    while pos + 2 <= len(data):
-        length = data[pos]
-        dtype = data[pos + 1]
-        if length < 2 or pos + length > len(data):
-            break
-        out.append((dtype, pos, data[pos : pos + length]))
-        pos += length
-    return out
+# ── 描述符解析（委托 usb_desc；保持旧 dict 形状供 GUI/API 使用） ──
+#
+# 唯一的解析实现是 ``core/usb_desc.py``。本节的函数只做「模型 → 旧 dict」的
+# 形状转换，字段名与顺序保持与既有抓包页一致，避免前端契约变化。
 
 
 def parse_device_descriptor(data: bytes) -> dict:
-    if len(data) < 18:
-        return {"error": f"设备描述符长度不足（{len(data)} < 18）"}
-    (
-        _blen,
-        _btype,
-        bcd_usb,
-        dev_class,
-        dev_subclass,
-        dev_protocol,
-        max_packet0,
-        vid,
-        pid,
-        bcd_device,
-        i_manufacturer,
-        i_product,
-        i_serial,
-        num_configs,
-    ) = struct.unpack_from("<BBHBBBBHHHBBBB", data, 0)
+    try:
+        dev = usb_desc.parse_device_descriptor(data)
+    except usb_desc.DescriptorError as exc:
+        return {"error": str(exc)}
     return {
-        "bcdUSB": f"{bcd_usb >> 8}.{(bcd_usb >> 4) & 0x0F}{bcd_usb & 0x0F}",
-        "deviceClass": dev_class,
-        "deviceClassName": class_name(dev_class, dev_subclass, dev_protocol),
-        "deviceSubClass": dev_subclass,
-        "deviceProtocol": dev_protocol,
-        "maxPacketSize0": max_packet0,
-        "vid": f"0x{vid:04X}",
-        "pid": f"0x{pid:04X}",
-        "bcdDevice": f"{bcd_device >> 8}.{(bcd_device >> 4) & 0x0F}{bcd_device & 0x0F}",
-        "iManufacturer": i_manufacturer,
-        "iProduct": i_product,
-        "iSerialNumber": i_serial,
-        "numConfigurations": num_configs,
+        "bcdUSB": usb_desc.bcd_text(dev.bcd_usb),
+        "deviceClass": dev.klass,
+        "deviceClassName": class_name(dev.klass, dev.subclass, dev.protocol),
+        "deviceSubClass": dev.subclass,
+        "deviceProtocol": dev.protocol,
+        "maxPacketSize0": dev.max_packet_size0,
+        "vid": f"0x{dev.vid:04X}",
+        "pid": f"0x{dev.pid:04X}",
+        "bcdDevice": usb_desc.bcd_text(dev.bcd_device),
+        "iManufacturer": dev.i_manufacturer,
+        "iProduct": dev.i_product,
+        "iSerialNumber": dev.i_serial,
+        "numConfigurations": dev.num_configurations,
     }
+
+
+def _class_descriptor_dict(item: usb_desc.ClassDescriptor) -> dict | None:
+    """把类描述符模型转成旧契约的 dict；未知类型返回 None（旧实现直接忽略）。"""
+    raw = item.raw
+    if item.kind == "IAD":
+        first = usb_desc.as_int(item.fields.get("firstInterface"))
+        count = usb_desc.as_int(item.fields.get("interfaceCount"))
+        klass = usb_desc.as_int(item.fields.get("class"))
+        subclass = usb_desc.as_int(item.fields.get("subClass"))
+        protocol = usb_desc.as_int(item.fields.get("protocol"))
+        return {
+            "type": "IAD",
+            "firstInterface": first,
+            "interfaceCount": count,
+            "class": klass,
+            "className": class_name(klass, subclass, protocol),
+            "subclass": subclass,
+            "protocol": protocol,
+            "iFunction": usb_desc.as_int(item.fields.get("iFunction")),
+        }
+    if item.kind == "CS_INTERFACE":
+        return {
+            "type": "CS_INTERFACE",
+            "subtype": item.subtype,
+            "hex": usb_desc.hex_string(raw),
+        }
+    if item.kind == "HID":
+        entry: dict = {"type": "HID", "hex": usb_desc.hex_string(raw)}
+        if len(raw) >= 9:
+            bcd_hid = struct.unpack_from("<H", raw, 2)[0]
+            entry.update(
+                {
+                    "bcdHID": f"{bcd_hid >> 8}.{bcd_hid & 0xFF:02X}",
+                    "countryCode": raw[4],
+                    "numDescriptors": raw[5],
+                    "reportDescriptorType": raw[6],
+                    "reportDescriptorLength": struct.unpack_from("<H", raw, 7)[0],
+                }
+            )
+        return entry
+    if item.kind == "HID_REPORT":
+        return {
+            "type": "HID_REPORT",
+            "length": len(raw),
+            "hex": hex_bytes(raw, 128),
+        }
+    return None
 
 
 def parse_config_descriptor(data: bytes) -> dict:
     """解析整段配置描述符（含接口/端点/类描述符）"""
-    if len(data) < 9:
-        return {"error": f"配置描述符长度不足（{len(data)} < 9）", "interfaces": []}
-
-    (
-        _blen,
-        _btype,
-        total_length,
-        num_interfaces,
-        config_value,
-        i_config,
-        attributes,
-        max_power,
-    ) = struct.unpack_from("<BBHBBBBB", data, 0)
+    try:
+        config = usb_desc.parse_config_descriptor(data)
+    except usb_desc.DescriptorError as exc:
+        return {"error": str(exc), "interfaces": []}
 
     interfaces: list[dict] = []
-    current: dict | None = None
     endpoint_classes: list[dict] = []
+    for interface in config.interfaces:
+        endpoints = []
+        for endpoint in interface.endpoints:
+            endpoints.append(
+                {
+                    "address": endpoint.address,
+                    "number": endpoint.number,
+                    "direction": endpoint.direction,
+                    "type": endpoint.transfer_type,
+                    "maxPacketSize": endpoint.max_packet_size,
+                    "interval": endpoint.interval,
+                }
+            )
+            endpoint_classes.append(
+                {
+                    "address": endpoint.address,
+                    "class": interface.klass,
+                    "subclass": interface.subclass,
+                    "protocol": interface.protocol,
+                }
+            )
+        class_descriptors = []
+        for item in interface.class_descriptors:
+            converted = _class_descriptor_dict(item)
+            if converted is not None:
+                class_descriptors.append(converted)
+        interfaces.append(
+            {
+                "number": interface.number,
+                "alternate": interface.alternate,
+                "numEndpoints": interface.declared_endpoints,
+                "class": interface.klass,
+                "className": class_name(
+                    interface.klass, interface.subclass, interface.protocol
+                ),
+                "subclass": interface.subclass,
+                "protocol": interface.protocol,
+                "iInterface": interface.i_interface,
+                "endpoints": endpoints,
+                "classDescriptors": class_descriptors,
+            }
+        )
 
-    for dtype, _pos, raw in _parse_descriptor_chain(data[9:]):
-        if dtype == 4 and len(raw) >= 9:  # INTERFACE
-            (
-                _l,
-                _t,
-                iface_num,
-                alt,
-                num_ep,
-                iface_class,
-                iface_sub,
-                iface_proto,
-                i_iface,
-            ) = struct.unpack_from("<BBBBBBBBB", raw, 0)
-            current = {
-                "number": iface_num,
-                "alternate": alt,
-                "numEndpoints": num_ep,
-                "class": iface_class,
-                "className": class_name(iface_class, iface_sub, iface_proto),
-                "subclass": iface_sub,
-                "protocol": iface_proto,
-                "iInterface": i_iface,
-                "endpoints": [],
-                "classDescriptors": [],
-            }
-            interfaces.append(current)
-        elif dtype == 5 and len(raw) >= 7:  # ENDPOINT
-            (
-                _l,
-                _t,
-                ep_addr,
-                ep_attr,
-                max_packet,
-                interval,
-            ) = struct.unpack_from("<BBBBHB", raw, 0)
-            ep = {
-                "address": ep_addr,
-                "number": ep_addr & 0x0F,
-                "direction": "in" if ep_addr & 0x80 else "out",
-                "type": {0: "control", 1: "isochronous", 2: "bulk", 3: "interrupt"}[
-                    ep_attr & 0x03
-                ],
-                "maxPacketSize": max_packet & 0x7FF,
-                "interval": interval,
-            }
-            if current is not None:
-                current["endpoints"].append(ep)
-                endpoint_classes.append(
-                    {
-                        "address": ep_addr,
-                        "class": current["class"],
-                        "subclass": current["subclass"],
-                        "protocol": current["protocol"],
-                    }
-                )
-        elif dtype == 0x0B and len(raw) >= 8:  # IAD
-            (
-                _l,
-                _t,
-                first_if,
-                if_count,
-                func_class,
-                func_sub,
-                func_proto,
-                i_func,
-            ) = struct.unpack_from("<BBBBBBBB", raw, 0)
-            entry = {
-                "type": "IAD",
-                "firstInterface": first_if,
-                "interfaceCount": if_count,
-                "class": func_class,
-                "className": class_name(func_class, func_sub, func_proto),
-                "subclass": func_sub,
-                "protocol": func_proto,
-                "iFunction": i_func,
-            }
-            if current is not None:
-                current["classDescriptors"].append(entry)
-        elif dtype == 0x24 and current is not None:  # class-specific interface
-            current["classDescriptors"].append(
-                {
-                    "type": "CS_INTERFACE",
-                    "subtype": raw[2] if len(raw) > 2 else None,
-                    "hex": raw.hex(" ").upper(),
-                }
-            )
-        elif dtype == 0x21 and current is not None:  # HID
-            entry: dict = {"type": "HID", "hex": raw.hex(" ").upper()}
-            if len(raw) >= 9:
-                bcd_hid = struct.unpack_from("<H", raw, 2)[0]
-                entry.update(
-                    {
-                        "bcdHID": f"{bcd_hid >> 8}.{bcd_hid & 0xFF:02X}",
-                        "countryCode": raw[4],
-                        "numDescriptors": raw[5],
-                        "reportDescriptorType": raw[6],
-                        "reportDescriptorLength": struct.unpack_from("<H", raw, 7)[0],
-                    }
-                )
-            current["classDescriptors"].append(entry)
-        elif dtype == 0x22 and current is not None:  # HID report descriptor
-            current["classDescriptors"].append(
-                {
-                    "type": "HID_REPORT",
-                    "length": len(raw),
-                    "hex": hex_bytes(raw, 128),
-                }
-            )
+    config_classes = []
+    for item in config.class_descriptors:
+        converted = _class_descriptor_dict(item)
+        if converted is not None:
+            config_classes.append(converted)
 
     return {
-        "totalLength": total_length,
-        "numInterfaces": num_interfaces,
-        "configurationValue": config_value,
-        "iConfiguration": i_config,
-        "attributes": attributes,
-        "selfPowered": bool(attributes & 0x40),
-        "remoteWakeup": bool(attributes & 0x20),
-        "maxPowerMa": max_power * 2,
+        "totalLength": config.total_length,
+        "numInterfaces": config.declared_num_interfaces or config.num_interfaces,
+        "configurationValue": config.value,
+        "iConfiguration": config.i_configuration,
+        "attributes": config.attributes,
+        "selfPowered": bool(config.attributes & 0x40),
+        "remoteWakeup": bool(config.attributes & 0x20),
+        "maxPowerMa": config.max_power * 2,
         "interfaces": interfaces,
         "endpointClasses": endpoint_classes,
+        # 配置级类描述符（IAD 常出现在接口之前）；旧契约没有此键，新增不破坏消费方
+        "classDescriptors": config_classes,
     }
 
 
 def parse_string_descriptor(data: bytes) -> str:
-    if len(data) < 2:
-        return ""
-    length = min(data[0], len(data))
-    body = data[2:length]
-    if len(body) % 2:
-        body = body[:-1]
     try:
-        return body.decode("utf-16-le", errors="replace").rstrip("\x00")
-    except Exception:
+        return usb_desc.parse_string_descriptor(data)
+    except usb_desc.DescriptorError:
         return ""
 
 
 def parse_device_qualifier(data: bytes) -> dict:
-    if len(data) < 10:
-        return {"error": "设备限定描述符长度不足"}
-    (
-        _l,
-        _t,
-        bcd_usb,
-        dev_class,
-        dev_sub,
-        dev_proto,
-        max_packet0,
-        num_configs,
-        _reserved,
-    ) = struct.unpack_from("<BBHBBBBBB", data, 0)
+    try:
+        parsed = usb_desc.parse_device_qualifier(data)
+    except usb_desc.DescriptorError as exc:
+        return {"error": str(exc)}
     return {
-        "bcdUSB": f"{bcd_usb >> 8}.{bcd_usb & 0xFF:02X}",
-        "deviceClass": dev_class,
-        "deviceClassName": class_name(dev_class, dev_sub, dev_proto),
-        "maxPacketSize0": max_packet0,
-        "numConfigurations": num_configs,
+        "bcdUSB": f"{parsed['bcdUSB'] >> 8}.{parsed['bcdUSB'] & 0xFF:02X}",
+        "deviceClass": parsed["class"],
+        "deviceClassName": class_name(
+            parsed["class"], parsed["subClass"], parsed["protocol"]
+        ),
+        "maxPacketSize0": parsed["maxPacketSize0"],
+        "numConfigurations": parsed["numConfigurations"],
     }
 
 
 def parse_bos_descriptor(data: bytes) -> dict:
-    if len(data) < 5:
-        return {"error": "BOS 描述符长度不足"}
-    _l, _t, total_length, num_caps = struct.unpack_from("<BBHB", data, 0)
-    caps = []
-    pos = 5
-    while pos + 3 <= len(data):
-        length = data[pos]
-        dtype = data[pos + 1]
-        if length < 3 or pos + length > len(data):
-            break
-        caps.append(
+    try:
+        bos = usb_desc.parse_bos_descriptor(data)
+    except usb_desc.DescriptorError as exc:
+        return {"error": str(exc)}
+    capabilities = []
+    for item in bos.capabilities:
+        capabilities.append(
             {
-                "type": DESCRIPTOR_TYPES.get(dtype, f"0x{dtype:02X}"),
-                "length": length,
-                "hex": hex_bytes(data[pos : pos + length], 64),
+                "type": DESCRIPTOR_TYPES.get(item.dtype, f"0x{item.dtype:02X}"),
+                "length": len(item.raw),
+                "hex": hex_bytes(item.raw, 64),
             }
         )
-        pos += length
-    return {"totalLength": total_length, "numDeviceCaps": num_caps, "capabilities": caps}
+    return {
+        "totalLength": bos.total_length,
+        "numDeviceCaps": len(bos.capabilities),
+        "capabilities": capabilities,
+    }
 
 
 # ── 类解码 ────────────────────────────────────────────────
@@ -867,6 +811,39 @@ class DescriptorCollector:
     def device_ids(self) -> list[tuple[int, int]]:
         return sorted(self._devices.keys())
 
+    def documents(self) -> list[dict]:
+        """把已收集的原始描述符整理成 ``usb_desc`` JSON 文档（每个设备一份）。
+
+        供 ``/api/usb/desc/from-capture`` 使用：抓包 → 文档 → 改 → 生成 hex。
+        描述符不完整（只有半个配置）时跳过该配置，而不是整份丢弃。
+        """
+        out: list[dict] = []
+        for (bus, device), state in sorted(self._devices.items()):
+            device_obj = None
+            if state.device_desc:
+                try:
+                    device_obj = usb_desc.parse_device_descriptor(state.device_desc)
+                except usb_desc.DescriptorError:
+                    device_obj = None
+            configs = []
+            for index in sorted(state.configs):
+                try:
+                    configs.append(usb_desc.parse_config_descriptor(state.configs[index]))
+                except usb_desc.DescriptorError:
+                    continue
+            if device_obj is None and not configs:
+                continue
+            out.append(
+                {
+                    "bus": bus,
+                    "device": device,
+                    "document": usb_desc.to_document(
+                        device_obj, configs, state.strings
+                    ),
+                }
+            )
+        return out
+
     def tree(self) -> list[dict]:
         nodes: list[dict] = []
         for (bus, device), state in sorted(self._devices.items()):
@@ -983,9 +960,7 @@ class DescriptorCollector:
 
 
 def _config_total_length(data: bytes) -> int | None:
-    if len(data) < 4:
-        return None
-    return struct.unpack_from("<H", data, 2)[0]
+    return usb_desc.config_total_length(data)
 
 
 def describe_transfer(

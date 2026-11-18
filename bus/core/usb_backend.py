@@ -50,6 +50,8 @@ DEFAULT_SNAPLEN = 65535
 SPOOL_KEEP_FILES = 20
 ENV_CACHE_SECONDS = 5.0
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+#: USBPcapCMD ``--devices`` 的参数形状：逗号分隔的设备地址
+_DEVICES_RE = re.compile(r"\d{1,3}(,\d{1,3})*")
 
 
 # ── 小工具 ────────────────────────────────────────────────
@@ -297,6 +299,8 @@ class UsbCaptureManager:
             "startedAt": None,
             "capturePath": None,
             "lastError": None,
+            # 离线解析进度 {processed, total, percent}；实时捕获时为 None
+            "progress": None,
         }
 
     # ── 基础状态 ──────────────────────────────────────────
@@ -482,6 +486,32 @@ class UsbCaptureManager:
         if not device_id:
             return {"success": False, "code": "capture_start_failed", "error": "未选择 USB 设备"}
 
+        # 参数先校验：这类错误与权限/安装状态无关，先报参数问题更容易定位。
+        bufferlen = options.get("bufferlen")
+        if bufferlen is not None:
+            try:
+                bufferlen = int(bufferlen)
+            except (TypeError, ValueError):
+                return {
+                    "success": False,
+                    "code": "invalid_bufferlen",
+                    "error": f"bufferlen 必须是整数：{options.get('bufferlen')!r}",
+                }
+            if not (4096 <= bufferlen <= 134217728):
+                return {
+                    "success": False,
+                    "code": "invalid_bufferlen",
+                    "error": f"bufferlen 超出范围（4096..134217728）：{bufferlen}",
+                }
+
+        devices = (options.get("devices") or "").strip()
+        if devices and not _DEVICES_RE.fullmatch(devices):
+            return {
+                "success": False,
+                "code": "invalid_devices",
+                "error": f"--devices 需要逗号分隔的设备地址（如 1,2,3）：{devices}",
+            }
+
         with self._lock:
             if (self._thread and self._thread.is_alive()) or (
                 self._proc and self._proc.poll() is None
@@ -505,8 +535,8 @@ class UsbCaptureManager:
                 "success": False,
                 "code": "not_elevated",
                 "error": (
-                    "USB 抓包需要管理员权限。请点击“管理员重启”，"
-                    "或右键 OMNI Bus 选择“以管理员身份运行”后重试。"
+                    "USB 抓包需要管理员权限。请以管理员身份重新打开终端后重试；"
+                    "GUI 下可右键 OMNI Bus 选择“以管理员身份运行”。"
                 ),
             }
 
@@ -522,6 +552,7 @@ class UsbCaptureManager:
             }
 
         snaplen = options.get("snaplen") or DEFAULT_SNAPLEN
+
         # -A: 抓取 root hub 上所有已连接设备；--inject-descriptors: 把已连接
         # 设备的描述符注入抓包。旧版本不支持时自动降级。
         cmd = [path, "-d", device_id, "-o", "-"]
@@ -531,6 +562,10 @@ class UsbCaptureManager:
             cmd.append("--inject-descriptors")
         if snaplen:
             cmd += ["-s", str(int(snaplen))]
+        if bufferlen is not None and self._has_option(path, "--bufferlen"):
+            cmd += ["-b", str(bufferlen)]
+        if devices and self._has_option(path, "--devices"):
+            cmd += ["--devices", devices]
 
         spool_path = self._new_spool_path()
         try:
@@ -586,6 +621,7 @@ class UsbCaptureManager:
                     "startedAt": datetime.now().isoformat(timespec="seconds"),
                     "capturePath": spool_path,
                     "lastError": None,
+                    "progress": None,
                 }
             )
 
@@ -1002,6 +1038,7 @@ class UsbCaptureManager:
                     "startedAt": datetime.now().isoformat(timespec="seconds"),
                     "capturePath": str(source),
                     "lastError": None,
+                    "progress": {"processed": 0, "total": total, "percent": 0.0},
                 }
             )
         self._emit_status()
@@ -1046,12 +1083,19 @@ class UsbCaptureManager:
                     if now - last_progress >= 0.2:
                         last_progress = now
                         processed = reader.total_bytes
+                        percent = round(min(100.0, processed * 100.0 / total), 1)
+                        with self._lock:
+                            self._status["progress"] = {
+                                "processed": processed,
+                                "total": total,
+                                "percent": percent,
+                            }
                         self._safe_emit(
                             "usb.open.progress",
                             {
                                 "processed": processed,
                                 "total": total,
-                                "percent": round(min(100.0, processed * 100.0 / total), 1),
+                                "percent": percent,
                             },
                         )
             if batch:
@@ -1067,6 +1111,7 @@ class UsbCaptureManager:
             with self._lock:
                 self._totals["unmatched"] += unmatched
                 self._status["loading"] = False
+                self._status["progress"] = None
                 if error:
                     self._status["lastError"] = error
             if error:
@@ -1096,6 +1141,7 @@ class UsbCaptureManager:
         filters = filters or {}
         with self._lock:
             rows = list(self._rows)
+            next_id = self._next_transfer_id
 
         matched = [row for row in rows if self._matches(row, filters)]
         total = len(matched)
@@ -1108,7 +1154,15 @@ class UsbCaptureManager:
         else:
             page = matched[-limit:]
 
-        return {"total": total, "items": [row.to_row() for row in page]}
+        return {
+            "total": total,
+            "items": [row.to_row() for row in page],
+            # 游标：CLI 的 --follow 用 nextId 作为下一次的 afterId；oldestId
+            # 用于提示「请求的游标已被环形缓存覆盖」。
+            "oldestId": rows[0].id if rows else None,
+            "nextId": next_id,
+            "buffered": len(rows),
+        }
 
     @staticmethod
     def _matches(row: TransferRecord, filters: dict) -> bool:
@@ -1242,6 +1296,10 @@ class UsbCaptureManager:
 
     def devices(self) -> dict:
         return {"tree": self._collector.tree()}
+
+    def documents(self) -> list[dict]:
+        """当前捕获/离线解析出的描述符文档（供 ``usb_test`` 与 from-capture 复用）。"""
+        return self._collector.documents()
 
     def clear(self) -> dict:
         with self._lock:

@@ -103,6 +103,9 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(page["total"], 4)
         rows = page["items"]
         self.assertEqual([row["id"] for row in rows], [1, 2, 3, 4])
+        self.assertEqual(page["oldestId"], 1)
+        self.assertEqual(page["nextId"], 5)
+        self.assertEqual(page["buffered"], 4)
         self.assertEqual(rows[2]["typeLabel"], "bulk")
         self.assertEqual(rows[2]["summary"], "BULK IN 5B")
         self.assertEqual(rows[3]["statusName"], "STALL_PID")
@@ -203,6 +206,20 @@ class ManagerTests(unittest.TestCase):
         result = self.manager.start(r"\\.\USBPcap1")
         self.assertFalse(result["success"])
         self.assertEqual(result["code"], "not_elevated")
+
+    def test_start_rejects_invalid_options(self):
+        if not is_windows():
+            self.skipTest("抓包参数校验仅 Windows 可用")
+        result = self.manager.start(r"\\.\USBPcap1", {"bufferlen": 100})
+        self.assertFalse(result["success"])
+        self.assertEqual(result["code"], "invalid_bufferlen")
+
+        result = self.manager.start(r"\\.\USBPcap1", {"bufferlen": "abc"})
+        self.assertEqual(result["code"], "invalid_bufferlen")
+
+        result = self.manager.start(r"\\.\USBPcap1", {"devices": "1,x"})
+        self.assertFalse(result["success"])
+        self.assertEqual(result["code"], "invalid_devices")
 
     def test_environment_shape(self):
         env = self.manager.environment(use_cache=False)
