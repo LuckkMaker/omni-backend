@@ -1,6 +1,6 @@
 # USB 能力实施计划（backend + CLI，Windows）
 
-> 状态：草案 v1（M0–M2 完成；**M3 请求暂停，先做可行性论证**，见 [usb-raw-access.md](usb-raw-access.md)；M4a 离线用例已完成）  
+> 状态：草案 v1（M0–M2 完成；M4a 离线用例完成；M3 请求拆分为 CDC/HID/WinUSB 三条通道，CDC 与 HID 已完成，WinUSB 待做）  
 > 范围：`omni-backend/bus` 后端 + `omni-cli` 命令组  
 > 不在范围：GUI、Linux/macOS、主机侧等时传输、USB-IF 合规测试、固件代码生成
 
@@ -258,7 +258,9 @@ omni_cli/
 | **M0 地基** | `usb_desc` 模型骨架；把 `usb_decode` 的解析收敛进来；`usb.py` 命令组注册（仅 `--help`，handler 抛未实现） | `core/usb_desc.py`、`omni usb --help`、`test_usb_desc.py` | `python -m unittest discover -s bus/tests` 全绿；后端只有一份描述符解析实现 | 3–4 人日 |
 | **M1 抓包接线** | `omni usb doctor`；CLI 封装现有抓包接口；`transfers --follow`；`--bufferlen/--devices`；`open/save/detail/devices` | `commands/usb.py` 抓包部分 | 真机：先 start 再插拔，能 `--follow` 看到枚举；离线 pcap 在无 USBPcap 机器上可解析 | 2–3 人日 |
 | **M2 描述符** | parse/validate/build/emit/template/from-capture；导出 hex/JSON | `usb_desc` 全量 + `api/usb_desc.py` | 8 个模板 round-trip；CDC 复合样本 `parse(build(x)) == x`；校验规则各有正反例 | 6–8 人日 |
-| **M3 请求** | 枚举/会话/控制/管道/echo；`capture replay` | `usb_host.py` + `api/usb_host.py` + 命令 | 接 `usbd_winusb` 示例跑通 `list/info/control/read/write/echo --pipeline`；抓包与请求同屏可见同一 URB；`usbd_winusb_cdc` 吞吐可复现 | 8–10 人日（**暂停：先做 raw-access 论证**） |
+| **M3a CDC** | 枚举 USB CDC、open/send/read/status/close、BREAK | 复用 `serial_backend` + `/api/serial/break` | `omni usb cdc list` 只列 USB 串口；收发与 `omni serial` 同源 | ✅ 已完成 |
+| **M3b HID** | HID 枚举、open、Input/Output/Feature 报告读写 | `core/usb_hid.py` + `api/usb_hid.py` + 命令 | `usb hid list/open/read/write/feature` 能对 `usbd_hid_custom` 收发报告 | ✅ 已完成 |
+| **M3c WinUSB** | SetupAPI 枚举、控制/批量/中断、pipe 控制、echo | `core/usb_winusb.py` + `api/usb_winusb.py` + 命令 | 接 `usbd_winusb` 跑通 list/info/control/read/write/echo --pipeline | 待做 |
 | **M4a 测试（离线 pcap）** | 用例执行器、`expect` 断言、JSON/JUnit 报告、退出码 | `core/usb_test.py` + `api/usb_tests.py` + 命令 | 录制的 pcap 可断言传输/设备/描述符；失败停在首个断言；JUnit 可被 CI 消费 | ✅ 已完成 |
 | **M4b 测试（动作步骤）** | `control/write/read/echo` 步骤 + 吞吐/回环断言 | 依赖 M3 的宿主能力 | 同 M3，外加用例层断言 | 未开始 |
 

@@ -43,6 +43,12 @@ class SerialSendRequest(BaseModel):
     data: str = Field(..., description="hex 字符串，如 '48656C6C6F'")
 
 
+class SerialBreakRequest(BaseModel):
+    """发送 BREAK 请求（CDC ACM SEND_BREAK 的串口侧等价操作）"""
+    connection_id: str = Field("cli", description="连接实例 ID")
+    duration_ms: int = Field(250, ge=0, le=5000, description="BREAK 持续时间 (ms)")
+
+
 class SerialCloseRequest(BaseModel):
     """关闭串口请求"""
     connection_id: str = Field(..., description="连接实例 ID（对应前端 Tab）")
@@ -139,6 +145,14 @@ async def send_data(req: SerialSendRequest):
         return {"success": False, "error": f"无效的 hex 字符串: {e}"}
 
     return await asyncio.to_thread(serial_manager.send, req.connection_id, data)
+
+
+@router.post("/break")
+async def send_break(req: SerialBreakRequest):
+    """发送 BREAK（阻塞到 BREAK 结束，放入线程执行）"""
+    return await asyncio.to_thread(
+        serial_manager.send_break, req.connection_id, req.duration_ms
+    )
 
 
 @router.post("/record/start")

@@ -240,6 +240,23 @@ class SerialBackend:
             self._event_manager.log("error", f"Serial 发送失败: {error_msg}")
             return {"success": False, "error": error_msg}
 
+    def send_break(self, duration_ms: int = 250) -> dict:
+        """发送 BREAK 信号（CDC ACM 的 SEND_BREAK 在驱动层的对应操作）。
+
+        pyserial 的 ``send_break`` 在 Windows 上走 SetCommBreak/ClearCommBreak，
+        会阻塞到 BREAK 结束，因此放在工作线程里调用（API 层用 to_thread）。
+        """
+        if not self.is_open() or self._serial is None:
+            return {"success": False, "error": "串口未打开"}
+        duration = max(0, int(duration_ms)) / 1000.0
+        try:
+            self._serial.send_break(duration)
+            return {"success": True, "duration_ms": int(duration_ms)}
+        except SerialException as e:
+            return {"success": False, "error": str(e)}
+        except (AttributeError, TypeError) as e:
+            return {"success": False, "error": f"串口已关闭: {e}"}
+
     def update(self, patch: dict) -> dict:
         """运行时更新部分串口参数（无需重开端口）
 
@@ -645,6 +662,14 @@ class SerialManager:
     def send(self, connection_id: str, data: bytes) -> dict:
         """向指定串口实例发送数据"""
         return self._get(connection_id).send(data)
+
+    def send_break(self, connection_id: str, duration_ms: int = 250) -> dict:
+        """向指定串口实例发送 BREAK"""
+        with self._lock:
+            backend = self._backends.get(connection_id)
+        if backend is None:
+            return {"success": False, "error": f"串口实例 {connection_id!r} 尚未打开"}
+        return backend.send_break(duration_ms)
 
     def update(self, connection_id: str, patch: dict) -> dict:
         """运行时更新指定串口实例的参数"""

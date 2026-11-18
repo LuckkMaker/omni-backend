@@ -126,6 +126,14 @@ CLI 不订阅 WebSocket（零第三方依赖），所有流式数据都用"后�
 | POST | `/api/usb/desc/from-capture` | `{path, bus?, device?}` → 每设备一份文档 |
 | GET | `/api/usb/test/schema` | 用例格式示例 |
 | POST | `/api/usb/test/run` | `{case|path, junit?, stopOnFailure?}` → 步骤级报告 |
+| POST | `/api/serial/break` | `{connection_id, duration_ms}` → 发送 BREAK（CDC `SEND_BREAK` 等价） |
+| GET | `/api/usb/hid/devices` | HID 设备枚举（VID/PID/产品名/报告长度） |
+| POST | `/api/usb/hid/open` | `{id, vid, pid, serial?, path?, timeout_ms?}` |
+| GET | `/api/usb/hid/status` | 会话状态 |
+| POST | `/api/usb/hid/close` | `{id}` |
+| POST | `/api/usb/hid/read` | `{id, length?, timeout_ms?}` → 一条 Input 报告 |
+| POST | `/api/usb/hid/write` | `{id, hex|dataB64, report_id?, timeout_ms?}` |
+| POST | `/api/usb/hid/feature/get`、`/feature/set` | Feature 报告读写 |
 
 USB 相关错误码（响应 `code` 字段，`success=false`）：
 
@@ -133,4 +141,6 @@ USB 相关错误码（响应 `code` 字段，`success=false`）：
 `invalid_bufferlen`、`invalid_devices`、`desc_parse_failed`、`document_invalid`、
 `template_not_found`、`input_too_large`、`pcap_not_found`、`pcap_open_failed`、
 `pcap_parse_error`、`case_missing`、`case_invalid`、`case_not_found`、
-`case_too_large`、`case_read_failed`。
+`case_too_large`、`case_read_failed`、`hid_unavailable`、`hid_not_found`、
+`hid_busy`、`hid_read_failed`、`hid_write_failed`、`hid_feature_failed`、
+`hid_invalid`。
