@@ -62,6 +62,25 @@ class SerialRecordStartRequest(BaseModel):
     path: str = Field(..., description="录制文件保存路径（.dat）")
 
 
+class SerialAutoSendRequest(BaseModel):
+    """定时发送请求"""
+    connection_id: str = Field("cli", description="连接实例 ID")
+    data: str = Field(..., description="hex 字符串（定时发送载荷）")
+    interval_ms: int = Field(1000, ge=10, le=60000, description="发送间隔 (ms)")
+
+
+class SerialAutoSendUpdateRequest(BaseModel):
+    """在线调整定时发送"""
+    connection_id: str = Field("cli", description="连接实例 ID")
+    data: str | None = Field(None, description="新的 hex 载荷（可选）")
+    interval_ms: int | None = Field(None, ge=10, le=60000, description="新的间隔 (ms)")
+
+
+class SerialAutoSendStopRequest(BaseModel):
+    """停止定时发送"""
+    connection_id: str = Field("cli", description="连接实例 ID")
+
+
 class SerialRecordStopRequest(BaseModel):
     """停止接收录制请求"""
     connection_id: str = Field(..., description="连接实例 ID（对应前端 Tab）")
@@ -132,6 +151,36 @@ async def start_record(req: SerialRecordStartRequest):
 async def stop_record(req: SerialRecordStopRequest):
     """停止录制接收数据"""
     return serial_manager.stop_record(req.connection_id)
+
+
+@router.post("/auto-send/start")
+async def auto_send_start(req: SerialAutoSendRequest):
+    """启动定时发送（后端持有定时器，CLI/GUI 关闭后仍继续）"""
+    try:
+        data = SerialBackend.parse_hex(req.data)
+    except ValueError as e:
+        return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await asyncio.to_thread(
+        serial_manager.start_auto_send, req.connection_id, data, req.interval_ms)
+
+
+@router.post("/auto-send/stop")
+async def auto_send_stop(req: SerialAutoSendStopRequest):
+    """停止定时发送，返回本次发送统计（sent/errors）"""
+    return await asyncio.to_thread(serial_manager.stop_auto_send, req.connection_id)
+
+
+@router.post("/auto-send/update")
+async def auto_send_update(req: SerialAutoSendUpdateRequest):
+    """在线调整定时发送的载荷/间隔"""
+    data = None
+    if req.data is not None:
+        try:
+            data = SerialBackend.parse_hex(req.data)
+        except ValueError as e:
+            return {"success": False, "error": f"无效的 hex 字符串: {e}"}
+    return await asyncio.to_thread(
+        serial_manager.update_auto_send, req.connection_id, data, req.interval_ms)
 
 
 @router.get("/data")

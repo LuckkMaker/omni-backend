@@ -58,6 +58,13 @@ class SerialBackend:
         self._record_bytes = 0
         # ── 接收环形缓存（REST/CLI 增量读取，与 WebSocket 推送并存） ──
         self._capture = SerialCapture()
+        # ── 定时发送（后端线程，CLI/GUI 关闭后仍继续） ──
+        self._auto_send_thread: threading.Thread | None = None
+        self._auto_send_stop = threading.Event()
+        self._auto_send_data: bytes = b""
+        self._auto_send_interval: float = 1.0
+        self._auto_send_sent: int = 0
+        self._auto_send_errors: int = 0
 
     # ── 公共方法 ──────────────────────────────────────────
 
@@ -267,6 +274,83 @@ class SerialBackend:
                 "info", f"Serial 参数已更新 [{serial_.port}]")
             return {"success": True}
 
+    # ── 定时发送（后端持有状态，前端/CLI 关闭后仍继续） ──────
+
+    def start_auto_send(self, data: bytes, interval_ms: int) -> dict:
+        """启动定时发送。
+
+        与网络模块一致由**后端**持有定时器：CLI 退出或 GUI 最小化都不影响，
+        间隔精度不受客户端调度影响。发送失败不终止任务，只累计错误数，
+        便于长时间稳定性测试后统计。
+        """
+        if not self.is_open():
+            return {"success": False, "error": "串口未打开"}
+        if not data:
+            return {"success": False, "error": "定时发送载荷为空"}
+
+        self.stop_auto_send()
+        self._auto_send_data = bytes(data)
+        self._auto_send_interval = max(10, int(interval_ms)) / 1000.0
+        self._auto_send_sent = 0
+        self._auto_send_errors = 0
+        self._auto_send_stop.clear()
+        self._auto_send_thread = threading.Thread(
+            target=self._auto_send_loop, name=f"serial-auto-send-{self.connection_id}", daemon=True)
+        self._auto_send_thread.start()
+        self._event_manager.log(
+            "info", f"Serial 定时发送已启动（{int(self._auto_send_interval * 1000)} ms）")
+        return {"success": True, "interval_ms": int(self._auto_send_interval * 1000)}
+
+    def stop_auto_send(self) -> dict:
+        """停止定时发送，返回本次发送统计。"""
+        thread = self._auto_send_thread
+        if thread is not None:
+            self._auto_send_stop.set()
+            thread.join(timeout=2.0)
+            self._auto_send_thread = None
+            self._event_manager.log("info", "Serial 定时发送已停止")
+        result = {"success": True, "sent": self._auto_send_sent,
+                  "errors": self._auto_send_errors}
+        self._auto_send_sent = 0
+        self._auto_send_errors = 0
+        return result
+
+    def update_auto_send(self, data: bytes | None = None,
+                         interval_ms: int | None = None) -> dict:
+        """在线调整定时发送的载荷/间隔（无需停止再启动）。"""
+        if self._auto_send_thread is None:
+            return {"success": False, "error": "定时发送未启动"}
+        if data is not None:
+            if not data:
+                return {"success": False, "error": "定时发送载荷为空"}
+            self._auto_send_data = bytes(data)
+        if interval_ms is not None:
+            self._auto_send_interval = max(10, int(interval_ms)) / 1000.0
+        return {"success": True,
+                "interval_ms": int(self._auto_send_interval * 1000),
+                "bytes": len(self._auto_send_data)}
+
+    def auto_send_status(self) -> dict:
+        return {
+            "running": self._auto_send_thread is not None
+                       and self._auto_send_thread.is_alive(),
+            "interval_ms": int(self._auto_send_interval * 1000),
+            "bytes": len(self._auto_send_data),
+            "sent": self._auto_send_sent,
+            "errors": self._auto_send_errors,
+        }
+
+    def _auto_send_loop(self) -> None:
+        """定时发送线程：固定间隔发送，不因单次失败而终止。"""
+        while not self._auto_send_stop.wait(self._auto_send_interval):
+            if not self.is_open():
+                break
+            result = self.send(self._auto_send_data)
+            if result.get("success"):
+                self._auto_send_sent += 1
+            else:
+                self._auto_send_errors += 1
+
     def get_status(self) -> dict:
         """获取串口状态"""
         if self.is_open() and self._serial is not None:
@@ -279,11 +363,15 @@ class SerialBackend:
                 "parity": self._serial.parity,
                 "stopbits": self._serial.stopbits,
                 "capture": self._capture.stats(),
+                "autoSend": self.auto_send_status(),
+                "recording": self.recording_status(),
             }
         return {
             "connection_id": self.connection_id,
             "connected": False,
             "capture": self._capture.stats(),
+            "autoSend": self.auto_send_status(),
+            "recording": self.recording_status(),
         }
 
     def read_capture(self, since: int = 0, max_bytes: int | None = None) -> dict:
@@ -301,6 +389,15 @@ class SerialBackend:
         return result
 
     # ── 接收数据录制（后端落盘，保证字节流 100% 完整） ──────────
+
+    def recording_status(self) -> dict:
+        """录制状态（供 /status 与 CLI `serial record status`）。"""
+        with self._record_lock:
+            return {
+                "active": self._record_file is not None,
+                "path": self._recording_path,
+                "bytes": self._record_bytes,
+            }
 
     def start_record(self, path: str) -> dict:
         """开始录制：将接收到的原始字节写入指定文件
@@ -556,6 +653,28 @@ class SerialManager:
         if backend is None:
             return {"success": False, "error": "串口未打开"}
         return backend.update(patch)
+
+    def start_auto_send(self, connection_id: str, data: bytes, interval_ms: int) -> dict:
+        with self._lock:
+            backend = self._backends.get(connection_id)
+        if backend is None:
+            return {"success": False, "error": f"串口实例 {connection_id!r} 尚未打开"}
+        return backend.start_auto_send(data, interval_ms)
+
+    def stop_auto_send(self, connection_id: str) -> dict:
+        with self._lock:
+            backend = self._backends.get(connection_id)
+        if backend is None:
+            return {"success": True, "sent": 0, "errors": 0}
+        return backend.stop_auto_send()
+
+    def update_auto_send(self, connection_id: str, data: bytes | None,
+                         interval_ms: int | None) -> dict:
+        with self._lock:
+            backend = self._backends.get(connection_id)
+        if backend is None:
+            return {"success": False, "error": f"串口实例 {connection_id!r} 尚未打开"}
+        return backend.update_auto_send(data, interval_ms)
 
     def start_record(self, connection_id: str, path: str) -> dict:
         """开始录制指定实例的接收数据"""

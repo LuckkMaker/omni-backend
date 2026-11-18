@@ -113,6 +113,8 @@ class TcpServerBackend:
         self._auto_send_data: bytes = b""
         self._auto_send_targets: list[str] | None = None
         self._auto_send_interval: float = 1.0
+        self._auto_send_sent = 0
+        self._auto_send_errors = 0
         # ── 接收环形缓存（REST/CLI 增量读取，与 WebSocket 推送并存） ──
         self._capture = NetCapture()
 
@@ -360,16 +362,24 @@ class TcpServerBackend:
                 if not self.running:
                     break
                 try:
-                    await self.send(self._auto_send_data, self._auto_send_targets)
+                    result = await self.send(self._auto_send_data, self._auto_send_targets)
+                    if result.get("success"):
+                        self._auto_send_sent += 1
+                    else:
+                        self._auto_send_errors += 1
                 except Exception as e:
+                    self._auto_send_errors += 1
                     logger.debug("tcp auto send error: %s", e)
         except asyncio.CancelledError:
             pass
 
     async def _cancel_auto_send(self) -> dict:
         task = self._auto_send_task
+        counts = {"sent": self._auto_send_sent, "errors": self._auto_send_errors}
+        self._auto_send_sent = 0
+        self._auto_send_errors = 0
         if task is None:
-            return {"success": True}
+            return {"success": True, **counts}
         self._auto_send_task = None
         if not task.done():
             task.cancel()
@@ -378,7 +388,7 @@ class TcpServerBackend:
             except asyncio.CancelledError:
                 pass
         self._event_manager.log("info", "Network TCP Server 定时发送已停止")
-        return {"success": True}
+        return {"success": True, **counts}
 
     def status(self) -> dict:
         return {
@@ -679,6 +689,8 @@ class TcpClientBackend:
         self._auto_send_task: asyncio.Task | None = None
         self._auto_send_data: bytes = b""
         self._auto_send_interval: float = 1.0
+        self._auto_send_sent = 0
+        self._auto_send_errors = 0
         # ── 接收环形缓存（REST/CLI 增量读取，与 WebSocket 推送并存） ──
         self._capture = NetCapture()
 
@@ -826,16 +838,24 @@ class TcpClientBackend:
                 if not self._connected:
                     break
                 try:
-                    await self.send(self._auto_send_data)
+                    result = await self.send(self._auto_send_data)
+                    if result.get("success"):
+                        self._auto_send_sent += 1
+                    else:
+                        self._auto_send_errors += 1
                 except Exception as e:
+                    self._auto_send_errors += 1
                     logger.debug("tcp client auto send error: %s", e)
         except asyncio.CancelledError:
             pass
 
     async def _cancel_auto_send(self) -> dict:
         task = self._auto_send_task
+        counts = {"sent": self._auto_send_sent, "errors": self._auto_send_errors}
+        self._auto_send_sent = 0
+        self._auto_send_errors = 0
         if task is None:
-            return {"success": True}
+            return {"success": True, **counts}
         self._auto_send_task = None
         if not task.done():
             task.cancel()
@@ -844,7 +864,7 @@ class TcpClientBackend:
             except asyncio.CancelledError:
                 pass
         self._event_manager.log("info", "Network TCP Client 定时发送已停止")
-        return {"success": True}
+        return {"success": True, **counts}
 
     def status(self) -> dict:
         return {
@@ -915,6 +935,8 @@ class UdpBackend:
         self._auto_send_data: bytes = b""
         self._auto_send_targets: list[str] = []
         self._auto_send_interval: float = 1.0
+        self._auto_send_sent = 0
+        self._auto_send_errors = 0
         # ── 接收环形缓存（REST/CLI 增量读取，与 WebSocket 推送并存） ──
         self._capture = NetCapture()
 
@@ -1054,16 +1076,24 @@ class UdpBackend:
                     if host is None or port is None:
                         continue
                     try:
-                        await self.send(self._auto_send_data, host, port)
+                        result = await self.send(self._auto_send_data, host, port)
+                        if result.get("success"):
+                            self._auto_send_sent += 1
+                        else:
+                            self._auto_send_errors += 1
                     except Exception as e:
+                        self._auto_send_errors += 1
                         logger.debug("udp auto send error: %s", e)
         except asyncio.CancelledError:
             pass
 
     async def _cancel_auto_send(self) -> dict:
         task = self._auto_send_task
+        counts = {"sent": self._auto_send_sent, "errors": self._auto_send_errors}
+        self._auto_send_sent = 0
+        self._auto_send_errors = 0
         if task is None:
-            return {"success": True}
+            return {"success": True, **counts}
         self._auto_send_task = None
         if not task.done():
             task.cancel()
@@ -1072,7 +1102,7 @@ class UdpBackend:
             except asyncio.CancelledError:
                 pass
         self._event_manager.log("info", "Network UDP 定时发送已停止")
-        return {"success": True}
+        return {"success": True, **counts}
 
     async def send(self, data: bytes, target_host: str, target_port: int) -> dict:
         """发送 UDP 数据报到目标地址（支持广播目标）"""
