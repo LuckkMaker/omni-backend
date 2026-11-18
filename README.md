@@ -48,6 +48,7 @@ python -m unittest discover -s tests -v
 # 服务自己的回归测试（无需硬件）
 python link/tests/test_rtt_scan.py
 python bus/tests/test_usb_decode.py
+python bus/tests/test_usb_desc.py     # 描述符模型：解析 / 生成 / 校验 / 模板
 ```
 
 `scripts/selfcheck.py` 会把状态/数据目录指到临时目录，不会污染

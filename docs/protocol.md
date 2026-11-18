@@ -101,6 +101,36 @@ CLI 不订阅 WebSocket（零第三方依赖），所有流式数据都用"后�
 | RTT / 变量监视 / ELF 解析 | ✅ | ❌ |
 | 串口 / 网络（TCP/UDP/TFTP） / Modbus | ❌ | ✅ |
 | USB 抓包分析 | ❌ | ✅ |
+| USB 描述符解析 / 校验 / 生成 / 模板 | ❌ | ✅ |
 | `/api/system/info`、`/api/system/shutdown`、`/api/health` | ✅ | ✅ |
 
 两个服务**互不 import**，只共享 `common/`（登记表、health 载荷、优雅关停）。
+
+## 8. USB 扩展路由（protocol 1 内新增）
+
+只增不改，不触及既有抓包路由；CLI 的 `omni usb` 与后续 GUI 共用。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/usb/environment` | USBPcap 安装 / 权限 / root hub |
+| GET | `/api/usb/capture/status` | 捕获或离线解析状态（含 `progress`） |
+| POST | `/api/usb/capture/start` | `{device_id, usbpcap_path?, snaplen?, bufferlen?, devices?}` |
+| POST | `/api/usb/capture/stop`、`/save`、`/open` | 停止 / 导出 / 离线解析 |
+| GET | `/api/usb/transfers` | 传输列表；响应含 `oldestId` / `nextId` / `buffered`，支持 `after_id` 增量 |
+| GET | `/api/usb/transfers/{id}` | 单条详情（SETUP / hex / 解码树） |
+| GET | `/api/usb/devices` | 抓包重建的设备描述符树 |
+| GET | `/api/usb/desc/templates`、`/templates/{name}` | 描述符模板 |
+| POST | `/api/usb/desc/parse` | `{hex}` 或 `{dataB64}` → 自动识别（Setup/设备/配置/字符串/BOS/限定符） |
+| POST | `/api/usb/desc/validate` | `{document}` → `{ok, errors[], warnings[]}` |
+| POST | `/api/usb/desc/build` | `{document}` → `{device, configurations[], strings[], bos, validation}` |
+| POST | `/api/usb/desc/from-capture` | `{path, bus?, device?}` → 每设备一份文档 |
+| GET | `/api/usb/test/schema` | 用例格式示例 |
+| POST | `/api/usb/test/run` | `{case|path, junit?, stopOnFailure?}` → 步骤级报告 |
+
+USB 相关错误码（响应 `code` 字段，`success=false`）：
+
+`usbpcap_not_found`、`not_elevated`、`capture_already_running`、`device_busy`、
+`invalid_bufferlen`、`invalid_devices`、`desc_parse_failed`、`document_invalid`、
+`template_not_found`、`input_too_large`、`pcap_not_found`、`pcap_open_failed`、
+`pcap_parse_error`、`case_missing`、`case_invalid`、`case_not_found`、
+`case_too_large`、`case_read_failed`。
