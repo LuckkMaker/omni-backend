@@ -1,0 +1,23 @@
+{
+  "name": "cdc-echo",
+  "device": {
+    "channel": "cdc",
+    "port": "COM73",
+    "baud": 115200,
+    "timeoutMs": 1000
+  },
+  "steps": [
+    { "open": {} },
+    {
+      "name": "发一行",
+      "write": { "data": "68 65 6C 6C 6F 20 6F 6D 6E 69 0A" },
+      "expect": { "bytesWritten": 11 }
+    },
+    {
+      "name": "收一行",
+      "read": { "timeoutMs": 1000 },
+      "expect": { "hex": "68 65 6C 6C 6F 20 6F 6D 6E 69 0A" }
+    },
+    { "close": {} }
+  ]
+}

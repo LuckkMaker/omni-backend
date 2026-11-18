@@ -262,7 +262,7 @@ omni_cli/
 | **M3b HID** | HID 枚举、open、Input/Output/Feature 报告读写 | `core/usb_hid.py` + `api/usb_hid.py` + 命令 | `usb hid list/open/read/write/feature` 能对 `usbd_hid_custom` 收发报告 | ✅ 已完成 |
 | **M3c WinUSB** | SetupAPI 枚举、控制/批量/中断、pipe 控制、echo | `core/usb_winusb.py` + `api/usb_winusb.py` + 命令 | 接 `usbd_winusb` 跑通 list/info/control/read/write/echo --pipeline | ✅ 已实现（链路/结构体测试通过，真机传输待接 `usbd_winusb` 验证） |
 | **M4a 测试（离线 pcap）** | 用例执行器、`expect` 断言、JSON/JUnit 报告、退出码 | `core/usb_test.py` + `api/usb_tests.py` + 命令 | 录制的 pcap 可断言传输/设备/描述符；失败停在首个断言；JUnit 可被 CI 消费 | ✅ 已完成 |
-| **M4b 测试（动作步骤）** | `control/write/read/echo` 步骤 + 吞吐/回环断言 | 依赖 M3 的宿主能力 | 同 M3，外加用例层断言 | 未开始 |
+| **M4b 测试（动作步骤）** | `control/write/read/echo` 步骤 + 真机用例 | 依赖 M3 的宿主能力 | 三个通道各有一条真机用例通过；失败时停在首个断言并输出 JUnit | ✅ 已完成 |
 
 合计约 **5–6 周**（单人、含联调）。M1 与 M2 无依赖，可并行；M3 依赖 M0；M4 依赖 M2+M3。
 
@@ -294,6 +294,15 @@ omni_cli/
   本次产生的传输（离线单测覆盖）；**真机端到端受管理员权限限制**：
   非管理员直接跑 USBPcapCMD 会留下提权 worker 并锁住 pcap，
   因此该路径必须用管理员终端验证。
+
+用例化验证（M4b，`omni usb test run --file ...`）：
+
+| 用例文件 | 结果 |
+| --- | --- |
+| `docs/examples/usb/winusb-echo-smoke.json` | PASS 6/6（open/control/write/read/echo/close，echo ≈235 KiB/s） |
+| `docs/examples/usb/hid-smoke.json` | PASS 4/4（写 64B 报告 + 读周期报告） |
+| `docs/examples/usb/cdc-echo.json` | PASS 4/4（COM73 发一行、回显校验） |
+| 负例（read 期望 `FF FF`） | FAIL 且退出码 1、`--junit` failures=1、后续步骤停止、close 仍执行 |
 
 ## 6. 关键设计决策与风险
 

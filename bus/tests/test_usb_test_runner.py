@@ -121,7 +121,7 @@ class RunnerTests(unittest.TestCase):
     def test_action_step_rejected(self):
         report = run_case(self._case([{"control": {"request": "0x06"}}]))
         self.assertFalse(report["ok"])
-        self.assertIn("M4b", report["steps"][0]["detail"])
+        self.assertIn("需要 device", report["steps"][0]["detail"])
 
     def test_invalid_case(self):
         with self.assertRaises(CaseError):
@@ -147,6 +147,169 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('failures="1"', xml)
         self.assertIn("<failure", xml)
         self.assertIn("多", xml)
+
+
+class FakeWinUsb:
+    """记录调用并返回预置结果，用来验证动作步骤编排。"""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.open_ok = True
+        self.echo_mismatches = 0
+
+    def open(self, session_id, **kwargs):
+        self.calls.append(("open", session_id, kwargs))
+        if not self.open_ok:
+            return {"success": False, "code": "winusb_not_found", "error": "没有设备"}
+        return {"success": True, "device": {"vid": "0xC251", "pid": "0x0002"}}
+
+    def control(self, session_id, **kwargs):
+        self.calls.append(("control", session_id, kwargs))
+        return {"success": True, "dataHex": "12 01 02", "length": 3}
+
+    def write(self, session_id, pipe, data):
+        self.calls.append(("write", session_id, pipe, data))
+        return {"success": True, "bytesWritten": len(data)}
+
+    def read(self, session_id, pipe, length):
+        self.calls.append(("read", session_id, pipe, length))
+        return {"success": True, "dataHex": "01 02 03 04", "length": 4}
+
+    def echo(self, session_id, **kwargs):
+        self.calls.append(("echo", session_id, kwargs))
+        return {
+            "success": True,
+            "iterations": kwargs.get("count", 0),
+            "mismatches": self.echo_mismatches,
+            "throughputKiBs": 10.0,
+        }
+
+    def close(self, session_id):
+        self.calls.append(("close", session_id))
+        return {"success": True}
+
+
+def live_case(steps=None) -> dict:
+    return {
+        "name": "winusb-live",
+        "device": {"channel": "winusb", "vid": "0xC251", "pid": "0x0002"},
+        "steps": steps
+        or [
+            {"open": {}},
+            {
+                "control": {"requestType": "0x80", "request": "0x06", "value": "0x0100", "length": 18},
+                "expect": {"ok": True, "hexStartsWith": "12 01"},
+            },
+            {"write": {"pipe": "0x01", "data": "01 02 03 04"}},
+            {"read": {"pipe": "0x81", "length": 4}, "expect": {"hex": "01 02 03 04"}},
+            {"echo": {"outPipe": "0x01", "inPipe": "0x81", "size": 64, "count": 5},
+             "expect": {"mismatches": 0}},
+            {"close": {}},
+        ],
+    }
+
+
+class LiveActionTests(unittest.TestCase):
+    def test_passing_case(self):
+        fake = FakeWinUsb()
+        report = run_case(live_case(), winusb_manager=fake)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["summary"]["passed"], 6)
+        self.assertEqual(
+            [call[0] for call in fake.calls],
+            ["open", "control", "write", "read", "echo", "close"],
+        )
+        self.assertEqual(report["device"]["channel"], "winusb")
+
+    def test_failed_assertion_still_closes(self):
+        fake = FakeWinUsb()
+        steps = [
+            {"open": {}},
+            {"read": {"pipe": "0x81", "length": 4}, "expect": {"hex": "FF FF"}},
+            {"close": {}},
+        ]
+        report = run_case(live_case(steps), winusb_manager=fake)
+        self.assertFalse(report["ok"])
+        self.assertIn("hex=", report["steps"][1]["detail"])
+        self.assertEqual(fake.calls[-1][0], "close")
+
+    def test_echo_mismatch_fails(self):
+        fake = FakeWinUsb()
+        fake.echo_mismatches = 1
+        report = run_case(live_case(), winusb_manager=fake)
+        self.assertFalse(report["ok"])
+        echo_step = next(item for item in report["steps"] if item["action"] == "echo")
+        self.assertFalse(echo_step["ok"])
+
+    def test_open_failure(self):
+        fake = FakeWinUsb()
+        fake.open_ok = False
+        steps = [{"open": {}}, {"read": {"pipe": "0x81", "length": 4}}, {"close": {}}]
+        report = run_case(live_case(steps), winusb_manager=fake)
+        self.assertFalse(report["steps"][0]["ok"])
+        self.assertIn("没有设备", report["steps"][0]["detail"])
+
+    def test_expect_without_pcap(self):
+        report = run_case(
+            live_case([{"expect": {"transfers": {"atLeast": 1}}}]),
+            winusb_manager=FakeWinUsb(),
+        )
+        self.assertFalse(report["ok"])
+        self.assertIn("需要 pcap", report["steps"][0]["detail"])
+
+    def test_unknown_channel(self):
+        with self.assertRaises(CaseError):
+            run_case(
+                {"name": "x", "device": {"channel": "nope"}, "steps": [{"open": {}}]},
+                winusb_manager=FakeWinUsb(),
+            )
+
+    def test_missing_source(self):
+        with self.assertRaises(CaseError):
+            run_case({"name": "x", "steps": [{"open": {}}]}, winusb_manager=FakeWinUsb())
+
+
+class FakeSerial:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self._data = b""
+
+    def open(self, session_id, config):
+        self.calls.append(("open", session_id, config))
+        return {"success": True}
+
+    def read_capture(self, session_id, since, max_bytes):
+        self.calls.append(("read", session_id, since))
+        return {"success": True, "chunks": [], "next_seq": 0, "cursor": 0}
+
+    def send(self, session_id, data):
+        self.calls.append(("send", session_id, data))
+        return {"success": True, "bytes_written": len(data)}
+
+    def close(self, session_id):
+        self.calls.append(("close", session_id))
+        return {"success": True}
+
+
+class CdcActionTests(unittest.TestCase):
+    def test_write_normalizes_bytes_written(self):
+        fake = FakeSerial()
+        case = {
+            "name": "cdc-live",
+            "device": {"channel": "cdc", "port": "COM73"},
+            "steps": [
+                {"open": {}, "expect": {"ok": True}},
+                {"write": {"data": "68 69"}, "expect": {"bytesWritten": 2}},
+                {"close": {}},
+            ],
+        }
+        report = run_case(case, serial_manager=fake)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(
+            [call[0] for call in fake.calls],
+            ["open", "read", "send", "close"],
+        )
+        self.assertEqual(fake.calls[2][2], b"hi")
 
 
 if __name__ == "__main__":

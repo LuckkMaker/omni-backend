@@ -1,0 +1,23 @@
+{
+  "name": "hid-smoke",
+  "device": {
+    "channel": "hid",
+    "vid": "0xC251",
+    "pid": "0x0001",
+    "timeoutMs": 600
+  },
+  "steps": [
+    { "open": {} },
+    {
+      "name": "写 64B 报告",
+      "write": { "reportId": 1, "data": "01 02 03 04 05" },
+      "expect": { "bytesWritten": 64 }
+    },
+    {
+      "name": "读周期报告",
+      "read": { "length": 64, "timeoutMs": 800 },
+      "expect": { "minLength": 1 }
+    },
+    { "close": {} }
+  ]
+}

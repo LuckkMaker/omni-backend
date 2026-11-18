@@ -126,6 +126,10 @@ CLI 不订阅 WebSocket（零第三方依赖），所有流式数据都用"后�
 | POST | `/api/usb/desc/from-capture` | `{path, bus?, device?}` → 每设备一份文档 |
 | GET | `/api/usb/test/schema` | 用例格式示例 |
 | POST | `/api/usb/test/run` | `{case|path, junit?, stopOnFailure?}` → 步骤级报告 |
+
+用例支持两类步骤：离线 pcap 断言（`transfers/transfer/device/errors/descriptor`）
+与真机动作（`open/control/write/read/echo/close`，`device.channel=winusb|hid|cdc`）。
+样例见 `docs/examples/usb/*.json`，格式定义见 `bus/core/usb_test.py::case_schema`。
 | POST | `/api/serial/break` | `{connection_id, duration_ms}` → 发送 BREAK（CDC `SEND_BREAK` 等价） |
 | GET | `/api/usb/hid/devices` | HID 设备枚举（VID/PID/产品名/报告长度） |
 | POST | `/api/usb/hid/open` | `{id, vid, pid, serial?, path?, timeout_ms?}` |
