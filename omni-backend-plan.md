@@ -494,7 +494,10 @@ git rm -r python
 > `GET /api/serial/data` / `POST /api/serial/read` + 阻塞调用 `asyncio.to_thread`
 > （omni-backend `0285065`，bus `v0.1.2`）；CLI `omni serial` 命令组 + 流式读取
 > 统一原始字节默认（rtt 行为变更）+ 分类帮助（omni-cli `0.25.0`）。
-> 待办：`net` 命令组；serial 的 CH340 实机回环验证。
+> 实机验证（2026-11-18，STM32F407 + J-Link + CH340，460800 8N1）：CDC/CH340 双向
+> 256KB 随机数据 md5 全对、零丢失（约 43KB/s，接近线速）；`--wait` 同步等读、
+> `--follow` 落盘、游标跨连接无重复均实测通过。
+> 待办：`net` 命令组。
 
 阶段 3/4 完成后，再开始 `omni serial` / `omni net`：
 
