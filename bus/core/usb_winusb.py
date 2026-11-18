@@ -87,6 +87,22 @@ class SP_DEVICE_INTERFACE_DATA(ctypes.Structure):
     ]
 
 
+class SP_DEVINFO_DATA(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("ClassGuid", GUID),
+        ("DevInst", ctypes.c_ulong),
+        ("Reserved", ctypes.c_size_t),
+    ]
+
+
+#: SetupDiGetDeviceRegistryProperty 的属性编号
+SPDRP_DEVICEDESC = 0x00
+SPDRP_SERVICE = 0x04
+SPDRP_FRIENDLYNAME = 0x0C
+DIGCF_ALLCLASSES = 0x04
+
+
 class USB_INTERFACE_DESCRIPTOR(ctypes.Structure):
     _fields_ = [
         ("bLength", ctypes.c_ubyte),
@@ -265,6 +281,21 @@ class WinUsbLibrary:
         s.SetupDiGetDeviceInterfaceDetailW.restype = ctypes.c_int
         s.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
         s.SetupDiDestroyDeviceInfoList.restype = ctypes.c_int
+        s.SetupDiEnumDeviceInfo.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(SP_DEVINFO_DATA)
+        ]
+        s.SetupDiEnumDeviceInfo.restype = ctypes.c_int
+        s.SetupDiGetDeviceInstanceIdW.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(SP_DEVINFO_DATA), ctypes.c_wchar_p,
+            ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong),
+        ]
+        s.SetupDiGetDeviceInstanceIdW.restype = ctypes.c_int
+        s.SetupDiGetDeviceRegistryPropertyW.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(SP_DEVINFO_DATA), ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong),
+        ]
+        s.SetupDiGetDeviceRegistryPropertyW.restype = ctypes.c_int
 
         k = self.kernel32
         k.CreateFileW.argtypes = [
@@ -316,6 +347,96 @@ def _explain_open(code: int) -> str:
 
 def _path_from_detail(buffer: ctypes.Array) -> str:
     return ctypes.wstring_at(ctypes.addressof(buffer) + 4)
+
+
+def parse_instance_id(text: str) -> dict[str, Any]:
+    """``USB\\VID_C251&PID_0002\\serial`` → ``{vid, pid, serial}``。
+
+    复合设备的 ``&MI_00`` 会被忽略；解析失败时对应字段为 None。
+    """
+    import re
+
+    match = re.search(r"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})", text or "")
+    vid = int(match.group(1), 16) if match else None
+    pid = int(match.group(2), 16) if match else None
+    parts = (text or "").split("\\")
+    serial = parts[-1] if len(parts) >= 3 and parts[-1] else None
+    return {"vid": vid, "pid": pid, "serial": serial}
+
+
+def _registry_string(setupapi, hdev: int, info: SP_DEVINFO_DATA, prop: int) -> str:
+    buffer = ctypes.create_unicode_buffer(512)
+    required = ctypes.c_ulong(0)
+    ok = setupapi.SetupDiGetDeviceRegistryPropertyW(
+        hdev,
+        ctypes.byref(info),
+        prop,
+        None,
+        ctypes.cast(buffer, ctypes.c_void_p),
+        ctypes.sizeof(buffer),
+        ctypes.byref(required),
+    )
+    return buffer.value if ok else ""
+
+
+def _instance_id(setupapi, hdev: int, info: SP_DEVINFO_DATA) -> str:
+    buffer = ctypes.create_unicode_buffer(512)
+    required = ctypes.c_ulong(0)
+    ok = setupapi.SetupDiGetDeviceInstanceIdW(
+        hdev, ctypes.byref(info), buffer, ctypes.sizeof(buffer), ctypes.byref(required)
+    )
+    return buffer.value if ok else ""
+
+
+def list_all_usb_devices(
+    library: WinUsbLibrary | None = None, service: str | None = None
+) -> dict[str, Any]:
+    """列出总线上所有 USB 设备及其驱动服务（``WINUSB``/``usbser``/``HidUsb``…）。
+
+    这是 ``winusb_test.py list --all`` 的等价能力：用于判断"设备没枚举"还是
+    "枚举了但驱动没绑定"。
+    """
+    lib = library or WinUsbLibrary()
+    if lib.setupapi is None:
+        raise WinUsbUnavailable("注入模式下不支持枚举")
+    hdev = lib.setupapi.SetupDiGetClassDevsW(
+        None, "USB", None, DIGCF_PRESENT | DIGCF_ALLCLASSES
+    )
+    if not hdev or hdev == INVALID_HANDLE_VALUE:
+        raise WinUsbError("SetupDiGetClassDevs 失败", ctypes.get_last_error())
+
+    devices: list[dict[str, Any]] = []
+    try:
+        index = 0
+        while True:
+            info = SP_DEVINFO_DATA()
+            info.cbSize = ctypes.sizeof(SP_DEVINFO_DATA)
+            if not lib.setupapi.SetupDiEnumDeviceInfo(hdev, index, ctypes.byref(info)):
+                break
+            index += 1
+            instance = _instance_id(lib.setupapi, hdev, info)
+            if not instance:
+                continue
+            name = _registry_string(lib.setupapi, hdev, info, SPDRP_SERVICE)
+            if service and name.lower() != service.lower():
+                continue
+            description = _registry_string(
+                lib.setupapi, hdev, info, SPDRP_FRIENDLYNAME
+            ) or _registry_string(lib.setupapi, hdev, info, SPDRP_DEVICEDESC)
+            parsed = parse_instance_id(instance)
+            devices.append(
+                {
+                    "instanceId": instance,
+                    "description": description,
+                    "service": name or "-",
+                    "vid": f"0x{parsed['vid']:04X}" if parsed["vid"] is not None else None,
+                    "pid": f"0x{parsed['pid']:04X}" if parsed["pid"] is not None else None,
+                    "serial": parsed["serial"],
+                }
+            )
+    finally:
+        lib.setupapi.SetupDiDestroyDeviceInfoList(hdev)
+    return {"success": True, "devices": devices}
 
 
 def _describe(lib: WinUsbLibrary, path: str, guid: str) -> WinUsbDevice:
@@ -625,6 +746,15 @@ class WinUsbManager:
         except WinUsbUnavailable as exc:
             return {"success": False, "code": "winusb_unavailable", "error": str(exc)}
         return {"success": True, "devices": [item.to_dict() for item in found]}
+
+    def all_devices(self, service: str | None = None) -> dict:
+        """所有 USB 设备 + 驱动服务名（分诊用）"""
+        try:
+            return list_all_usb_devices(self._library(), service)
+        except WinUsbUnavailable as exc:
+            return {"success": False, "code": "winusb_unavailable", "error": str(exc)}
+        except WinUsbError as exc:
+            return {"success": False, "code": "winusb_enum_failed", "error": str(exc)}
 
     def open(
         self,

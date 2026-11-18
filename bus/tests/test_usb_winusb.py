@@ -57,6 +57,25 @@ class PatternTests(unittest.TestCase):
             winusb.build_pattern("nope", 4)
 
 
+class InstanceIdTests(unittest.TestCase):
+    def test_plain(self):
+        parsed = winusb.parse_instance_id(r"USB\VID_C251&PID_0002\316836531147")
+        self.assertEqual(parsed["vid"], 0xC251)
+        self.assertEqual(parsed["pid"], 0x0002)
+        self.assertEqual(parsed["serial"], "316836531147")
+
+    def test_composite(self):
+        parsed = winusb.parse_instance_id(r"USB\VID_C251&PID_0001&MI_00\6&2b8f")
+        self.assertEqual(parsed["vid"], 0xC251)
+        self.assertEqual(parsed["pid"], 0x0001)
+        self.assertEqual(parsed["serial"], "6&2b8f")
+
+    def test_invalid(self):
+        parsed = winusb.parse_instance_id("PCI\\VEN_8086")
+        self.assertIsNone(parsed["vid"])
+        self.assertIsNone(parsed["pid"])
+
+
 class ManagerTests(unittest.TestCase):
     def test_devices_result_shape(self):
         result = winusb.WinUsbManager().devices()

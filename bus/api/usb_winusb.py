@@ -94,6 +94,12 @@ async def winusb_devices(guid: list[str] | None = None):
     return winusb_manager.devices(guid)
 
 
+@router.get("/all-devices")
+async def winusb_all_devices(service: str | None = None):
+    """列出所有 USB 设备及驱动服务名（判断"没枚举"还是"驱动没绑定"）"""
+    return winusb_manager.all_devices(service)
+
+
 @router.post("/open")
 async def winusb_open(req: OpenRequest):
     return winusb_manager.open(

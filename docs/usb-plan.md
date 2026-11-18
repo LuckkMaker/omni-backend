@@ -285,6 +285,16 @@ omni_cli/
 1. `WinUsb_Initialize` 要求接口句柄以 `FILE_FLAG_OVERLAPPED` 打开，否则失败且 `GetLastError` 为 0；
 2. `WinUsb_QueryDeviceInformation(DEVICE_SPEED)` 的 length 必须是 1，返回 1=full / 3=high（不是 0..3 的速度枚举）。
 
+补充能力（已实现）：
+
+- `omni usb winusb list --all`：列出总线上全部 USB 设备与驱动服务
+  （实测可见 `WINUSB` / `usbser` / `HidUsb` / `USBSTOR` / `usbvideo` 等），
+  用于判断"没枚举"还是"驱动没绑定"；
+- `winusb control/echo --capture`：请求前后自动启停 USBPcap，并按端点核对
+  本次产生的传输（离线单测覆盖）；**真机端到端受管理员权限限制**：
+  非管理员直接跑 USBPcapCMD 会留下提权 worker 并锁住 pcap，
+  因此该路径必须用管理员终端验证。
+
 ## 6. 关键设计决策与风险
 
 | 决策/风险 | 处理 |
