@@ -76,8 +76,9 @@ CLI 不订阅 WebSocket（零第三方依赖），所有流式数据都用"后�
 - CLI 用 `--since <seq>` 拉取，返回 `{chunks, oldest_seq, next_seq, cursor, lost, truncated, session_reset}`；
   `lost=true` 表示请求的游标已被覆盖，`session_reset=true` 表示后端重启后 seq 重新开始。
 - CLI 的 `--follow` 只是把上一次的 `cursor` 当成下一次的 `since`，间隔默认 0.2s。
-- 现有实现：`omni rtt read --follow`（`link/core/rtt_backend.py::read_capture`）。
-  总线类命令（serial/net）沿用同一契约，见后续版本的 `omni serial read --follow`。
+- 现有实现：`omni rtt read --follow`（`link/core/rtt_backend.py::read_capture`）与
+  `omni serial read --follow`（`bus/core/serial_capture.py`，另有 `POST /api/serial/read`
+  同步等读：`timeout_ms` 内等首批数据，供 AT 命令式交互）；`net` 沿用同一契约。
 
 ## 5. 错误约定
 

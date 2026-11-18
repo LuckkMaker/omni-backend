@@ -38,7 +38,7 @@ from core.events import event_manager
 from common import omni_service
 
 # 后端版本号（bus 服务独立发版：bus-vX.Y.Z）
-BACKEND_VERSION = "0.1.1"
+BACKEND_VERSION = "0.1.2"
 
 # CLI ↔ 后端协议版本（只增不改语义；见 docs/protocol.md）
 PROTOCOL_VERSION = 1

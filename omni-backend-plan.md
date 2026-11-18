@@ -490,6 +490,12 @@ git rm -r python
 
 ## 13. 后续（本计划之后）
 
+> 进度（2026-11-18）：serial 部分已交付——后端 `SerialCapture` 环形缓存 +
+> `GET /api/serial/data` / `POST /api/serial/read` + 阻塞调用 `asyncio.to_thread`
+> （omni-backend `0285065`，bus `v0.1.2`）；CLI `omni serial` 命令组 + 流式读取
+> 统一原始字节默认（rtt 行为变更）+ 分类帮助（omni-cli `0.25.0`）。
+> 待办：`net` 命令组；serial 的 CH340 实机回环验证。
+
 阶段 3/4 完成后，再开始 `omni serial` / `omni net`：
 
 - 后端（omni-backend/bus）：串口接收环形缓存 + `GET /api/serial/data?since=`、`POST /api/serial/read`；TCP/UDP 接收缓存 + 游标；ping 记录；serial 同步调用改 `asyncio.to_thread`。
