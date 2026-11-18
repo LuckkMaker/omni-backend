@@ -5,12 +5,15 @@
 路由前缀: /api/serial
 """
 
+import asyncio
 import logging
+import time
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from core.events import event_manager
 from core.serial_backend import SerialBackend, SerialManager
+from core.serial_capture import CAPTURE_MAX_READ
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -68,8 +71,8 @@ class SerialRecordStopRequest(BaseModel):
 
 @router.get("/ports")
 async def list_ports():
-    """列出可用串口"""
-    ports = serial_manager.list_ports()
+    """列出可用串口（主机 COM 口枚举；WMI 查询可能耗时，放入线程执行）"""
+    ports = await asyncio.to_thread(serial_manager.list_ports)
     return {"ports": ports}
 
 
@@ -86,13 +89,13 @@ async def open_serial(req: SerialOpenRequest):
         "rts": req.rts,
         "dtr": req.dtr,
     }
-    return serial_manager.open(req.connection_id, config)
+    return await asyncio.to_thread(serial_manager.open, req.connection_id, config)
 
 
 @router.post("/close")
 async def close_serial(req: SerialCloseRequest):
     """关闭指定串口"""
-    return serial_manager.close(req.connection_id)
+    return await asyncio.to_thread(serial_manager.close, req.connection_id)
 
 
 @router.post("/update")
@@ -105,7 +108,7 @@ async def update_serial(req: SerialUpdateRequest):
         patch["rts"] = req.rts
     if req.dtr is not None:
         patch["dtr"] = req.dtr
-    return serial_manager.update(req.connection_id, patch)
+    return await asyncio.to_thread(serial_manager.update, req.connection_id, patch)
 
 
 @router.post("/send")
@@ -116,7 +119,7 @@ async def send_data(req: SerialSendRequest):
     except ValueError as e:
         return {"success": False, "error": f"无效的 hex 字符串: {e}"}
 
-    return serial_manager.send(req.connection_id, data)
+    return await asyncio.to_thread(serial_manager.send, req.connection_id, data)
 
 
 @router.post("/record/start")
@@ -129,6 +132,60 @@ async def start_record(req: SerialRecordStartRequest):
 async def stop_record(req: SerialRecordStopRequest):
     """停止录制接收数据"""
     return serial_manager.stop_record(req.connection_id)
+
+
+@router.get("/data")
+async def read_data(
+    connection_id: str = Query(default="cli", description="连接实例 ID"),
+    since: int = Query(default=0, ge=0, description="起始 seq（0 = 从最旧可用数据开始）"),
+    max_bytes: int = Query(default=65536, ge=1, description="单次返回的字节预算"),
+):
+    """按 seq 游标增量读取接收缓冲（CLI `omni serial read` 的数据源）。
+
+    返回契约与 link 服务的 RTT 读取一致：
+    {success, connection_id, running, oldest_seq, next_seq, last_seq, cursor,
+     truncated, lost, session_reset, dropped_*, chunks:[{seq, size, data(base64)}]}
+    读端记住 ``cursor`` 作为下一次的 ``since`` 即可连续读取，多客户端互不影响。
+    """
+    return await asyncio.to_thread(
+        serial_manager.read_capture, connection_id, since, min(max_bytes, CAPTURE_MAX_READ)
+    )
+
+
+# ── 同步等读 ──────────────────────────────────────────────
+
+class SerialSyncReadRequest(BaseModel):
+    """同步等读请求：等到有数据或超时，一次返回"""
+    connection_id: str = Field("cli", description="连接实例 ID")
+    timeout_ms: int = Field(500, ge=0, le=30000, description="最长等待毫秒数")
+    max_bytes: int = Field(65536, ge=1, description="单次返回的字节预算")
+    since: int = Field(0, ge=0, description="起始 seq（0 = 从最旧可用数据开始）")
+
+
+@router.post("/read")
+async def read_sync(req: SerialSyncReadRequest):
+    """同步等读：在 timeout_ms 内等待接收缓冲出现数据，首批到达即返回。
+
+    用于“发一条、收一条”的交互（如 AT 命令式设备）：send 之后立刻 read，
+    不必轮询。``since`` 语义与 GET /data 一致；超时返回空 chunks（不算错误）。
+    """
+    deadline = time.monotonic() + req.timeout_ms / 1000.0
+
+    def _drain() -> dict:
+        while True:
+            result = serial_manager.read_capture(
+                req.connection_id, req.since, min(req.max_bytes, CAPTURE_MAX_READ)
+            )
+            if not result.get("success"):
+                return result
+            if result.get("chunks"):
+                return result
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return result
+            time.sleep(min(0.01, remaining))
+
+    return await asyncio.to_thread(_drain)
 
 
 @router.get("/status")

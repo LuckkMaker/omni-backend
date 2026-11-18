@@ -20,6 +20,8 @@ import serial
 from serial.tools import list_ports
 from serial.serialutil import SerialException
 
+from core.serial_capture import CAPTURE_MAX_READ, SerialCapture
+
 logger = logging.getLogger(__name__)
 
 # ── 串口参数校验集合 ────────────────────────────────────────
@@ -54,6 +56,8 @@ class SerialBackend:
         self._record_lock = threading.Lock()
         self._recording_path = None
         self._record_bytes = 0
+        # ── 接收环形缓存（REST/CLI 增量读取，与 WebSocket 推送并存） ──
+        self._capture = SerialCapture()
 
     # ── 公共方法 ──────────────────────────────────────────
 
@@ -274,8 +278,27 @@ class SerialBackend:
                 "bytesize": self._serial.bytesize,
                 "parity": self._serial.parity,
                 "stopbits": self._serial.stopbits,
+                "capture": self._capture.stats(),
             }
-        return {"connection_id": self.connection_id, "connected": False}
+        return {
+            "connection_id": self.connection_id,
+            "connected": False,
+            "capture": self._capture.stats(),
+        }
+
+    def read_capture(self, since: int = 0, max_bytes: int | None = None) -> dict:
+        """按 seq 游标增量读取接收缓冲（供 REST / CLI）。
+
+        串口已关闭但缓存中仍有历史数据（open → 收数 → close 后回看）时照常返回，
+        由 ``running`` 字段告知串口是否仍在接收。
+        """
+        result = self._capture.read(since=since, max_bytes=max_bytes or CAPTURE_MAX_READ)
+        result.update({
+            "success": True,
+            "connection_id": self.connection_id,
+            "running": self.is_open(),
+        })
+        return result
 
     # ── 接收数据录制（后端落盘，保证字节流 100% 完整） ──────────
 
@@ -420,7 +443,11 @@ class SerialBackend:
                 now = time.monotonic()
                 if accum and (len(accum) >= _RX_FLUSH_SIZE
                               or (now - last_flush) >= _RX_FLUSH_INTERVAL):
-                    self._emit_rx(bytes(accum))
+                    batch = bytes(accum)
+                    # 环形缓存与 WebSocket 推送同批写入：CLI 按游标增量拉取，
+                    # 缓存溢出只影响可回溯窗口，不影响事件推送。
+                    self._capture.append(batch)
+                    self._emit_rx(batch)
                     accum.clear()
                     last_flush = now
 
@@ -490,13 +517,33 @@ class SerialManager:
         return self._get(connection_id).open(config)
 
     def close(self, connection_id: str) -> dict:
-        """关闭指定串口实例"""
+        """关闭指定串口实例的串口，但**保留实例与接收缓存**。
+
+        实例不销毁意味着：同一 connection_id 重新 open 时接收缓存的 seq 自然
+        续号（旧游标仍安全），close 之后缓存中的历史数据仍可按游标回看
+        （与 link 服务 RTT 的 "stop 后仍可 read" 行为一致）。
+        """
         with self._lock:
             backend = self._backends.get(connection_id)
-            if backend is None:
-                return {"success": True}
-            self._backends.pop(connection_id, None)
+        if backend is None:
+            return {"success": True}
         return backend.close()
+
+    def read_capture(self, connection_id: str, since: int = 0, max_bytes: int | None = None) -> dict:
+        """按 seq 游标增量读取指定实例的接收缓冲。
+
+        从未打开过的 connection_id 视为未创建会话，返回可执行的错误提示
+        （而不是悄悄返回空数据，那会让“串口没开”被误读成“没有收到数据”）。
+        """
+        with self._lock:
+            backend = self._backends.get(connection_id)
+        if backend is None:
+            return {
+                "success": False,
+                "error": f"串口实例 {connection_id!r} 尚未打开：请先执行 `omni serial open`"
+                         f"（或 POST /api/serial/open）",
+            }
+        return backend.read_capture(since=since, max_bytes=max_bytes)
 
     def send(self, connection_id: str, data: bytes) -> dict:
         """向指定串口实例发送数据"""
