@@ -14,12 +14,14 @@ from core.usb_decode import (  # noqa: E402
     DescriptorCollector,
     decode_line_coding,
     decode_msc,
+    class_hint_for,
     decode_setup,
     parse_config_descriptor,
     parse_device_descriptor,
     parse_string_descriptor,
     status_name,
     summarize_transfer,
+    urb_function_name,
 )
 from core.usb_pcap import IrpAssembler, PcapStreamReader  # noqa: E402
 from usb_fixtures import (  # noqa: E402
@@ -57,6 +59,25 @@ class SetupDecodeTests(unittest.TestCase):
         self.assertEqual(info["type"], "standard")
         self.assertIn("SET_CONFIGURATION(1)", info["summary"])
 
+    def test_rndis_encapsulated(self):
+        self.assertEqual(class_hint_for(0xEF, 0x04), "rndis")
+        info = decode_setup(control_setup(0x21, 0x00, 0, 0, 12), class_hint="rndis")
+        self.assertEqual(info["requestName"], "SEND_ENCAPSULATED_COMMAND")
+        info = decode_setup(control_setup(0xA1, 0x01, 0, 0, 16), class_hint="rndis")
+        self.assertEqual(info["requestName"], "GET_ENCAPSULATED_RESPONSE")
+
+    def test_status_names(self):
+        self.assertEqual(status_name(0x80000300), "INVALID_PARAMETER")
+        self.assertEqual(status_name(0xC0010000), "CANCELED")
+        self.assertEqual(status_name(0xC0007000), "DEVICE_GONE")
+        self.assertEqual(status_name(0xC0000005), "DEV_NOT_RESPONDING")
+
+    def test_urb_function_names(self):
+        self.assertEqual(urb_function_name(0x2A), "GET_MS_FEATURE_DESCRIPTOR")
+        self.assertEqual(urb_function_name(0x38), "RESET_PIPE")
+        self.assertEqual(urb_function_name(0x1E), "SYNC_RESET_PIPE_AND_CLEAR_STALL")
+        self.assertEqual(urb_function_name(0x0002), "ABORT_PIPE")
+
     def test_set_address(self):
         info = decode_setup(control_setup(0x00, 5, 7, 0, 0))
         self.assertEqual(info["decoded"]["deviceAddress"], 7)
@@ -74,6 +95,17 @@ class SetupDecodeTests(unittest.TestCase):
         self.assertEqual(info["requestName"], "SET_REPORT")
         self.assertEqual(info["decoded"]["reportType"], "Output")
         self.assertEqual(info["decoded"]["reportId"], 5)
+
+    def test_hub_port_reset(self):
+        info = decode_setup(control_setup(0x23, 3, 4, 2, 0), class_hint="hub")
+        self.assertEqual(info["requestName"], "SET_FEATURE")
+        self.assertEqual(info["decoded"]["hubFeature"], "PORT_RESET")
+        self.assertEqual(info["decoded"]["port"], 3)
+        self.assertIn("SET_FEATURE(PORT_RESET, port 3)", info["summary"])
+
+    def test_hub_port_suspend(self):
+        info = decode_setup(control_setup(0x23, 3, 2, 0, 0), class_hint="hub")
+        self.assertIn("PORT_SUSPEND", info["summary"])
 
     def test_vendor_request(self):
         info = decode_setup(control_setup(0x40, 0xA1, 0x1234, 0, 4))

@@ -104,6 +104,8 @@ async def transfers(
     endpoint: int | None = Query(None, ge=0, le=255),
     status: str | None = Query(None, description="ok / error"),
     min_length: int | None = Query(None, ge=0, alias="minLength"),
+    vid: str | None = Query(None, description="按设备 VID 过滤，如 0xC251"),
+    pid: str | None = Query(None, description="按设备 PID 过滤，如 0x0002"),
     q: str | None = Query(None, description="摘要/设备号文本搜索"),
 ):
     types = [item.strip() for item in (type or "").split(",") if item.strip()]
@@ -115,6 +117,8 @@ async def transfers(
         "endpoint": endpoint,
         "status": status,
         "minLength": min_length,
+        "vid": vid,
+        "pid": pid,
         "q": q,
     }
     return usb_manager.query(

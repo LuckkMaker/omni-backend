@@ -142,6 +142,14 @@ class ManagerTests(unittest.TestCase):
         search = self.manager.query(limit=10, filters={"q": "BULK"})
         self.assertEqual(search["total"], 1)
 
+        all_total = self.manager.query(limit=10)["total"]
+        by_vid = self.manager.query(limit=10, filters={"vid": "0x1234"})
+        self.assertEqual(by_vid["total"], all_total)
+        by_pid = self.manager.query(limit=10, filters={"pid": "5678"})
+        self.assertEqual(by_pid["total"], all_total)
+        no_match = self.manager.query(limit=10, filters={"vid": "0x9999"})
+        self.assertEqual(no_match["total"], 0)
+
     def test_export_and_clear(self):
         self.manager.open_file(str(self.path))
         wait_loaded(self.manager)
@@ -196,7 +204,7 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(status["totals"]["other"], 1)
         row = self.manager.query()["items"][0]
         self.assertEqual(row["typeLabel"], "urb")
-        self.assertEqual(row["summary"], "URB_0x001E")
+        self.assertEqual(row["summary"], "SYNC_RESET_PIPE_AND_CLEAR_STALL")
 
     def test_start_requires_elevation(self):
         if is_elevated():

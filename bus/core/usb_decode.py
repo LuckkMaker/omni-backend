@@ -83,6 +83,32 @@ DEVICE_CLASSES = {
     0xFF: "Vendor Specific",
 }
 
+#: Hub class SetPortFeature/ClearPortFeature 选择子（USB 2.0 hub 规范）
+HUB_FEATURE_NAMES = {
+    0: "PORT_CONNECTION",
+    1: "PORT_ENABLE",
+    2: "PORT_SUSPEND",
+    3: "PORT_OVER_CURRENT",
+    4: "PORT_RESET",
+    8: "PORT_POWER",
+    9: "PORT_LOW_SPEED",
+    16: "C_PORT_CONNECTION",
+    17: "C_PORT_ENABLE",
+    18: "C_PORT_SUSPEND",
+    19: "C_PORT_OVER_CURRENT",
+    20: "C_PORT_RESET",
+    21: "C_PORT_POWER",
+}
+
+#: Hub class 请求码
+HUB_REQUESTS = {
+    0: "GET_STATUS",
+    1: "CLEAR_FEATURE",
+    3: "SET_FEATURE",
+    6: "GET_DESCRIPTOR",
+    7: "SET_DESCRIPTOR",
+}
+
 CDC_REQUESTS = {
     0x00: "SEND_ENCAPSULATED_COMMAND",
     0x01: "GET_ENCAPSULATED_RESPONSE",
@@ -90,6 +116,12 @@ CDC_REQUESTS = {
     0x21: "GET_LINE_CODING",
     0x22: "SET_CONTROL_LINE_STATE",
     0x23: "SEND_BREAK",
+}
+
+#: RNDIS（interface class 0xEF/0x04）的控制请求，码值与 CDC 一致
+RNDIS_REQUESTS = {
+    0x00: "SEND_ENCAPSULATED_COMMAND",
+    0x01: "GET_ENCAPSULATED_RESPONSE",
 }
 
 HID_REQUESTS = {
@@ -138,19 +170,93 @@ MSC_OPCODES = {
 USBD_STATUS_NAMES = {
     0x00000000: "SUCCESS",
     0x40000000: "PENDING",
+    # 传输/协议错误
+    0xC0000001: "CRC",
+    0xC0000002: "BTSTUFF",
+    0xC0000003: "DATA_TOGGLE_MISMATCH",
     0xC0000004: "STALL_PID",
     0xC0000005: "DEV_NOT_RESPONDING",
+    0xC0000006: "PID_CHECK_FAILURE",
+    0xC0000007: "UNEXPECTED_PID",
     0xC0000008: "DATA_OVERRUN",
     0xC0000009: "DATA_UNDERRUN",
     0xC000000C: "BUFFER_OVERRUN",
     0xC000000D: "BUFFER_UNDERRUN",
+    0xC000000F: "NOT_ACCESSED",
+    0xC0000010: "FIFO",
+    0xC0000011: "XACT_ERROR",
+    0xC0000012: "BABBLE_DETECTED",
+    0xC0000013: "DATA_BUFFER_ERROR",
+    0xC0000030: "ENDPOINT_HALTED",
+    # 栈/参数错误
+    0x80000200: "INVALID_URB_FUNCTION",
+    0x80000300: "INVALID_PARAMETER",
+    0x80000400: "ERROR_BUSY",
+    0x80000600: "INVALID_PIPE_HANDLE",
+    0x80000700: "NO_BANDWIDTH",
+    0x80000800: "INTERNAL_HC_ERROR",
+    0x80000900: "ERROR_SHORT_TRANSFER",
+    # 等时/帧
+    0xC0000A00: "BAD_START_FRAME",
+    0xC0000B00: "ISOCH_REQUEST_FAILED",
+    0xC0000C00: "FRAME_CONTROL_OWNED",
+    0xC0000D00: "FRAME_CONTROL_NOT_OWNED",
+    0xC0000E00: "NOT_SUPPORTED",
+    0xC0000F00: "INVALID_CONFIGURATION_DESCRIPTOR",
+    # 设备移除 / 取消
+    0xC0007000: "DEVICE_GONE",
     0xC0010000: "CANCELED",
 }
 
+#: Windows usbdi.h 的 URB_FUNCTION_*（只列常见项，其余回落成 URB_0xNNNN）
 _URB_TRANSFER_FUNCTIONS = {
+    0x0000: "SELECT_CONFIGURATION",
+    0x0001: "SELECT_INTERFACE",
+    0x0002: "ABORT_PIPE",
+    0x0003: "TAKE_FRAME_LENGTH_CONTROL",
+    0x0004: "RELEASE_FRAME_LENGTH_CONTROL",
+    0x0005: "GET_FRAME_LENGTH",
+    0x0006: "SET_FRAME_LENGTH",
+    0x0007: "GET_CURRENT_FRAME_NUMBER",
     0x0008: "CONTROL_TRANSFER",
     0x0009: "BULK_OR_INTERRUPT_TRANSFER",
     0x000A: "ISOCH_TRANSFER",
+    0x000B: "GET_DESCRIPTOR_FROM_DEVICE",
+    0x000C: "SET_DESCRIPTOR_TO_DEVICE",
+    0x000D: "SET_FEATURE_TO_DEVICE",
+    0x000E: "SET_FEATURE_TO_INTERFACE",
+    0x000F: "SET_FEATURE_TO_ENDPOINT",
+    0x0010: "CLEAR_FEATURE_TO_DEVICE",
+    0x0011: "CLEAR_FEATURE_TO_INTERFACE",
+    0x0012: "CLEAR_FEATURE_TO_ENDPOINT",
+    0x0013: "GET_STATUS_FROM_DEVICE",
+    0x0014: "GET_STATUS_FROM_INTERFACE",
+    0x0015: "GET_STATUS_FROM_ENDPOINT",
+    0x0017: "VENDOR_DEVICE",
+    0x0018: "VENDOR_INTERFACE",
+    0x0019: "VENDOR_ENDPOINT",
+    0x001A: "CLASS_DEVICE",
+    0x001B: "CLASS_INTERFACE",
+    0x001C: "CLASS_ENDPOINT",
+    0x001E: "SYNC_RESET_PIPE_AND_CLEAR_STALL",
+    0x001F: "CLASS_OTHER",
+    0x0020: "VENDOR_OTHER",
+    0x0021: "GET_STATUS_FROM_OTHER",
+    0x0022: "CLEAR_FEATURE_TO_OTHER",
+    0x0023: "SET_FEATURE_TO_OTHER",
+    0x0024: "GET_DESCRIPTOR_FROM_ENDPOINT",
+    0x0025: "SET_DESCRIPTOR_TO_ENDPOINT",
+    0x0026: "GET_CONFIGURATION",
+    0x0027: "GET_INTERFACE",
+    0x0028: "GET_DESCRIPTOR_FROM_INTERFACE",
+    0x0029: "SET_DESCRIPTOR_TO_INTERFACE",
+    0x002A: "GET_MS_FEATURE_DESCRIPTOR",
+    0x0030: "SYNC_RESET_PIPE",
+    0x0031: "SYNC_CLEAR_STALL",
+    0x0032: "CONTROL_TRANSFER_EX",
+    0x0038: "RESET_PIPE",
+    0x0039: "OPEN_STATIC_STREAMS",
+    0x003A: "CLOSE_STATIC_STREAMS",
 }
 
 
@@ -177,8 +283,21 @@ def class_name(cls: int, subcls: int = 0, protocol: int = 0) -> str:
     return DEVICE_CLASSES.get(cls, f"Class 0x{cls:02X}")
 
 
+def _normalize_hex_id(value: str) -> str | None:
+    """``0xC251`` / ``C251`` / ``c251`` → ``0xC251``；非法返回 None。"""
+    text = str(value).strip()
+    if text.lower().startswith("0x"):
+        text = text[2:]
+    try:
+        return f"0x{int(text, 16):04X}"
+    except ValueError:
+        return None
+
+
 def class_hint_for(cls: int, subcls: int = 0) -> str | None:
     """把 bDeviceClass/bInterfaceClass 转成前端用的短标签"""
+    if cls == 0xEF and subcls == 0x04:
+        return "rndis"
     if cls == 0x02:
         return "cdc"
     if cls == 0x03:
@@ -273,6 +392,12 @@ def decode_setup(setup: bytes, class_hint: str | None = None) -> dict:
     elif req_type == "class" and class_hint == "msc":
         decoded["mscRequest"] = request
         decoded["interface"] = w_index
+    elif req_type == "class" and class_hint == "hub":
+        if request in (0, 1, 3):  # GET_STATUS / CLEAR_FEATURE / SET_FEATURE
+            decoded["hubFeature"] = HUB_FEATURE_NAMES.get(
+                w_value, f"0x{w_value:04X}"
+            )
+            decoded["port"] = w_index + 1
     elif req_type == "class" and class_hint == "dfu":
         decoded["interface"] = w_index
     elif req_type == "vendor":
@@ -304,6 +429,8 @@ def _request_name(req_type: str, request: int, class_hint: str | None) -> str:
             "cdc": CDC_REQUESTS,
             "hid": HID_REQUESTS,
             "dfu": DFU_REQUESTS,
+            "hub": HUB_REQUESTS,
+            "rndis": RNDIS_REQUESTS,
         }.get(class_hint or "", {})
         return table.get(request, f"CLASS_0x{request:02X}")
     if req_type == "vendor":
@@ -357,6 +484,10 @@ def _setup_summary(
         )
     elif name == "SET_ADDRESS":
         parts.append(f"SET_ADDRESS({decoded.get('deviceAddress', '?')})")
+    elif decoded.get("hubFeature"):
+        parts.append(
+            f"{name}({decoded['hubFeature']}, port {decoded.get('port', '?')})"
+        )
     elif name in ("SET_FEATURE", "CLEAR_FEATURE"):
         parts.append(f"{name}(sel=0x{decoded.get('featureSelector', 0):04X})")
     elif name == "SET_LINE_CODING":
@@ -792,6 +923,22 @@ class DescriptorCollector:
             state.endpoint_classes[item["address"] & 0x0F] = item
 
     # ── 查询 ──────────────────────────────────────────────
+    def device_addresses(
+        self, *, vid: str | None = None, pid: str | None = None
+    ) -> set[tuple[int, int]]:
+        """按 VID/PID 找抓包期间枚举到的设备地址（``0xC251`` / ``C251`` 均可）。"""
+        want_vid = _normalize_hex_id(vid) if vid else None
+        want_pid = _normalize_hex_id(pid) if pid else None
+        out: set[tuple[int, int]] = set()
+        for key, state in self._devices.items():
+            device = state.device or {}
+            if want_vid and device.get("vid") != want_vid:
+                continue
+            if want_pid and device.get("pid") != want_pid:
+                continue
+            out.add(key)
+        return out
+
     def class_hint(self, bus: int, device: int, endpoint: int) -> str | None:
         state = self._devices.get((bus, device))
         if state is None:
@@ -803,6 +950,15 @@ class DescriptorCollector:
                 hint = class_hint_for(cls, sub)
                 if hint:
                     return hint
+            if cls == 0xEF and (endpoint & 0x7F) == 0:
+                # 复合设备（0xEF/0x02）的控制请求：按接口类推断（RNDIS/CDC/HID…）
+                for config in state.parsed_configs.values():
+                    for interface in config.get("interfaces") or []:
+                        hint = class_hint_for(
+                            interface.get("class", 0), interface.get("subclass", 0)
+                        )
+                        if hint:
+                            return hint
         item = state.endpoint_classes.get(endpoint & 0x0F)
         if item:
             return class_hint_for(item.get("class", 0), item.get("subclass", 0))

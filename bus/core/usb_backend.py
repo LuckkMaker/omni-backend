@@ -47,6 +47,8 @@ from core.usb_pcap import (
 
 DEFAULT_RING_SIZE = 50_000
 DEFAULT_SNAPLEN = 65535
+#: 列表接口随行返回的 payload 预览字节数（详情仍按需回读 spool）
+PREVIEW_BYTES = 64
 SPOOL_KEEP_FILES = 20
 ENV_CACHE_SECONDS = 5.0
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -215,7 +217,7 @@ _USBPCAP_ID_RE = re.compile(r"USBPcap(\d+)", re.IGNORECASE)
 
 @dataclass(slots=True)
 class TransferRecord:
-    """ring 中保存的紧凑传输记录（payload 不常驻内存）"""
+    """ring 中保存的紧凑传输记录（payload 只留前 PREVIEW_BYTES 字节预览）"""
 
     id: int
     ts: float
@@ -233,6 +235,7 @@ class TransferRecord:
     partial: bool
     setup: bytes | None
     records: tuple[RecordRef, ...]
+    preview: bytes = b""
 
     def to_row(self) -> dict[str, Any]:
         return {
@@ -254,6 +257,9 @@ class TransferRecord:
             "classHint": self.class_hint,
             "summary": self.summary,
             "partial": self.partial,
+            "dataHex": self.preview.hex(" ").upper(),
+            "dataTruncated": self.length > len(self.preview),
+            "setupHex": self.setup.hex(" ").upper() if self.setup else "",
         }
 
 
@@ -893,6 +899,7 @@ class UsbCaptureManager:
                 partial=transfer.partial,
                 setup=transfer.setup,
                 records=transfer.records,
+                preview=transfer.data[:PREVIEW_BYTES],
             )
             if len(self._rows) == self._rows.maxlen:
                 evicted = self._rows[0]
@@ -1142,6 +1149,13 @@ class UsbCaptureManager:
         with self._lock:
             rows = list(self._rows)
             next_id = self._next_transfer_id
+            vid = filters.get("vid")
+            pid = filters.get("pid")
+            if vid or pid:
+                allowed = self._collector.device_addresses(vid=vid, pid=pid)
+                rows = [
+                    row for row in rows if (row.bus, row.device) in allowed
+                ]
 
         matched = [row for row in rows if self._matches(row, filters)]
         total = len(matched)

@@ -436,6 +436,12 @@ def list_all_usb_devices(
             )
     finally:
         lib.setupapi.SetupDiDestroyDeviceInfoList(hdev)
+    try:
+        from core.usb_topology import annotate_devices
+
+        annotate_devices(devices)
+    except Exception:
+        pass
     return {"success": True, "devices": devices}
 
 
