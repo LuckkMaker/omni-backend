@@ -80,6 +80,10 @@ class FlashResult:
     # 擦除操作实际擦除的字节数（erase 专用）
     bytes_erased: int = 0
     duration_ms: int = 0
+    # program 的阶段耗时（0 表示该阶段未执行）
+    erase_ms: int = 0
+    program_ms: int = 0
+    verify_ms: int = 0
     error: Optional[str] = None
 
     def to_payload(self, omit_zero_written: bool = False) -> dict:
@@ -97,6 +101,9 @@ class FlashResult:
             data.pop("bytes_verified", None)
         if not data.get("bytes_erased"):
             data.pop("bytes_erased", None)
+        for phase in ("erase_ms", "program_ms", "verify_ms"):
+            if not data.get(phase):
+                data.pop(phase, None)
         return data
 
 

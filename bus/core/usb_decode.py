@@ -1055,6 +1055,10 @@ class DescriptorCollector:
                         or "-",
                     },
                 ]
+                config_name = self._string(state, cfg.get("iConfiguration") or 0, 0x0409)
+                if config_name:
+                    cfg_fields.append({"name": "配置字符串", "value": config_name})
+                iad_nodes = self._iad_nodes(state, cfg)
                 iface_nodes = []
                 for iface in cfg.get("interfaces", []):
                     iface_fields = [
@@ -1067,6 +1071,9 @@ class DescriptorCollector:
                         },
                         {"name": "端点数", "value": str(iface.get("numEndpoints", ""))},
                     ]
+                    interface_name = self._string(state, iface.get("iInterface") or 0, 0x0409)
+                    if interface_name:
+                        iface_fields.append({"name": "接口名", "value": interface_name})
                     ep_nodes = []
                     for ep in iface.get("endpoints", []):
                         ep_nodes.append(
@@ -1093,7 +1100,7 @@ class DescriptorCollector:
                         "kind": "configuration",
                         "title": f"配置 {cfg.get('configurationValue')}",
                         "fields": cfg_fields,
-                        "children": iface_nodes,
+                        "children": iad_nodes + iface_nodes,
                     }
                 )
 
@@ -1103,6 +1110,36 @@ class DescriptorCollector:
                     "title": title,
                     "fields": fields,
                     "children": children,
+                }
+            )
+        return nodes
+
+    def _iad_nodes(self, state: "_DeviceState", cfg: dict) -> list[dict]:
+        """把配置里的 IAD 渲染成独立节点（接口关联 + 功能名）。"""
+        nodes: list[dict] = []
+        for item in cfg.get("classDescriptors") or []:
+            if item.get("type") != "IAD":
+                continue
+            first = item.get("firstInterface") or 0
+            count = item.get("interfaceCount") or 0
+            scope = f"{first}..{first + count - 1}" if count > 1 else str(first)
+            fields = [
+                {"name": "接口范围", "value": scope},
+                {"name": "功能类", "value": str(item.get("className") or "")},
+                {
+                    "name": "SubClass/Protocol",
+                    "value": f"{item.get('subclass', 0)}/{item.get('protocol', 0)}",
+                },
+            ]
+            function_name = self._string(state, item.get("iFunction") or 0, 0x0409)
+            if function_name:
+                fields.append({"name": "功能名", "value": function_name})
+            nodes.append(
+                {
+                    "kind": "interface-association",
+                    "title": "IAD 接口关联",
+                    "fields": fields,
+                    "children": [],
                 }
             )
         return nodes

@@ -130,6 +130,9 @@ class ScbFieldWriteRequest(BaseModel):
 class ReadMemoryRequest(BaseModel):
     address: int
     length: int = 64
+    # True：阻塞等探针空闲再读（CLI 显式请求用）；False：非侵入读取，
+    # 探针被占用时返回 skipped，供 GUI 周期刷新跳过本轮
+    block: bool = False
 
 
 class ResetRequest(BaseModel):
@@ -1377,6 +1380,10 @@ async def zone_memory_read(uid: str, req: ReadMemoryRequest):
         raise HTTPException(status_code=400, detail="Probe not connected")
     length = min(max(req.length, 1), 1024)
     try:
+        if req.block:
+            # 显式读取：等探针空闲（halt + 读），不能返回空数据
+            data = await asyncio.to_thread(backend.read_memory, uid, req.address, length)
+            return {"success": True, "address": req.address, "length": length, "data_hex": data.hex()}
         data = await asyncio.to_thread(backend.read_memory_direct, uid, req.address, length)
         if data is None:
             return {"success": True, "skipped": True, "address": req.address, "length": length, "data_hex": ""}

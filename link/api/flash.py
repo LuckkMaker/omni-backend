@@ -34,6 +34,8 @@ class ProgramRequest(BaseModel):
     verify: bool = True
     reset: bool = True
     base_address: int | None = None
+    # 擦除模式：sector 只擦镜像覆盖的扇区（默认），chip 整片擦除
+    erase: str = "sector"
 
 
 class VerifyRequest(BaseModel):
@@ -152,7 +154,8 @@ async def program_flash(uid: str, req: ProgramRequest):
     """烧录固件（支持文件路径或 base64 数据）"""
     async with _flash_operation(uid) as state:
         result = await asyncio.to_thread(
-            backend.program, uid, req.file_path, req.verify, req.reset, req.base_address, req.data
+            backend.program, uid, req.file_path, req.verify, req.reset, req.base_address, req.data,
+            req.erase
         )
     payload = _flash_payload(result, state)
     event_manager.emit("flash.complete", payload)

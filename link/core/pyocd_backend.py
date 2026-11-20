@@ -1356,6 +1356,7 @@ class PyOCDBackend(BackendInterface):
         reset: bool = True,
         base_address: int | None = None,
         data: str = "",
+        erase: str = "sector",
     ) -> FlashResult:
         """烧录固件
 
@@ -1365,6 +1366,7 @@ class PyOCDBackend(BackendInterface):
             verify: 烧录后是否校验
             reset: 烧录后是否复位
             base_address: BIN 文件的烧录基地址
+            erase: 擦除模式，"sector"（默认，只擦镜像覆盖的扇区）或 "chip"（整片）
         """
         self._begin_operation()
         session = self._get_session(probe_uid)
@@ -1436,14 +1438,39 @@ class PyOCDBackend(BackendInterface):
                     "percent": progress_pct,
                 })
 
-            # 使用 chip_erase="sector" 仅擦除需要编程的扇区
-            # 原因：chip_erase="auto" 在已擦除的 Flash 上会跳过擦除，导致编程静默失败
-            # chip_erase="chip" 全片擦除太慢（1MB Flash 约 10-15s），改为按需擦除
-            programmer = FileProgrammer(session, progress=progress_callback, chip_erase="sector")
+            # 默认 chip_erase="sector" 只擦需要编程的扇区：
+            # chip_erase="auto" 在已擦除的 Flash 上会跳过擦除导致编程静默失败，
+            # chip_erase="chip" 全片擦除太慢（1 MB Flash 约 10–15 s），由用户显式选择
+            erase_mode = erase if erase in ("chip", "sector", "auto") else "sector"
+            programmer = FileProgrammer(session, progress=progress_callback, chip_erase=erase_mode)
 
-            # 注意：FileProgrammer.program() 不支持 verify 参数（pyOCD 0.44 的 FlashLoader.commit 中 verify 为 TODO）
-            # 烧录后如需校验，调用独立的 verify() 方法
-            programmer.program(file_path, **kwargs)
+            # 阶段计时：pyOCD 的 FlashLoader.commit() 先 Erasing 再 Programming，
+            # 0.44 只有百分比进度、没有相位回调，用日志时间戳切分擦除/编程耗时
+            phases: dict[str, float] = {}
+            loader_logger = logging.getLogger("pyocd.flash.loader")
+
+            class _PhaseTimer(logging.Handler):
+                def emit(self, record):
+                    message = record.getMessage()
+                    now = time.time()
+                    if message.startswith("Erasing"):
+                        phases["erase_start"] = now
+                    elif message.startswith("Programming"):
+                        phases.setdefault("erase_start", now)
+                        phases["erase_ms"] = int((now - phases["erase_start"]) * 1000)
+                        phases["program_start"] = now
+
+            phase_timer = _PhaseTimer(level=logging.INFO)
+            loader_logger.addHandler(phase_timer)
+            try:
+                # 注意：FileProgrammer.program() 不支持 verify 参数（pyOCD 0.44 的 FlashLoader.commit 中 verify 为 TODO）
+                # 烧录后如需校验，调用独立的 verify() 方法
+                programmer.program(file_path, **kwargs)
+            finally:
+                loader_logger.removeHandler(phase_timer)
+
+            erase_ms = int(phases.get("erase_ms", 0))
+            program_ms = int((time.time() - phases.get("program_start", time.time())) * 1000)
 
             # 第二阶段完成：发送 program 100% 确保进度条走到终点
             event_manager.emit("flash.progress", {
@@ -1455,6 +1482,7 @@ class PyOCDBackend(BackendInterface):
 
             # 烧录后自动校验
             verify_ok = True
+            verify_ms = 0
             if verify:
                 event_manager.log("info", "Verifying...")
                 event_manager.emit("flash.progress", {
@@ -1462,6 +1490,7 @@ class PyOCDBackend(BackendInterface):
                 })
                 verify_result = self.verify(probe_uid, file_path, base_address=base_address)
                 verify_ok = verify_result.success
+                verify_ms = verify_result.duration_ms
                 if not verify_ok:
                     event_manager.log("error", f"Verify failed: {verify_result.error}")
                     return FlashResult(
@@ -1481,6 +1510,9 @@ class PyOCDBackend(BackendInterface):
                 success=True,
                 bytes_written=actual_data_size,
                 duration_ms=duration,
+                erase_ms=erase_ms,
+                program_ms=program_ms,
+                verify_ms=verify_ms,
             )
         except FlashOperationCancelled:
             canceled_ms = int((time.time() - start_time) * 1000)
