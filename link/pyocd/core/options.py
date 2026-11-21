@@ -45,6 +45,10 @@ BUILTIN_OPTIONS = [
     OptionInfo('chip_erase', str, "sector",
         "Whether to perform a chip erase or sector erases when programming flash. The value must be"
         " one of 'auto', 'sector', or 'chip'."),
+    OptionInfo('cmsis_dap.jtag_irlens', str, None,
+        "Comma-separated IR lengths of every TAP on the JTAG scan chain, e.g. '4,5'. Required for targets "
+        "whose JTAG chain has more than one TAP (STM32F1/F2/F4 and APM32F4 expose a CPU TAP with IRLen 4 "
+        "plus a boundary-scan TAP with IRLen 5). If unset, a single 4-bit TAP is assumed."),
     OptionInfo('cmsis_dap.prefer_v1', bool, False,
         "If a device provides both CMSIS-DAP v1 and v2 interfaces, use the v1 interface in preference of v2. "
         "Normal behaviour is to prefer the v2 interface. This option is primarily intended for testing."),

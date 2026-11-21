@@ -926,7 +926,14 @@ class DAPAccessCMSISDAP(DAPAccessIntf):
         if self._dap_port == DAPAccessIntf.PORT.SWD:
             self.configure_swd()
         elif self._dap_port == DAPAccessIntf.PORT.JTAG:
-            self.configure_jtag()
+            # DAP_JTAG_Configure needs every TAP on the scan chain. Targets such as STM32F4/APM32F4
+            # have a CPU TAP (IRLen 4) plus a boundary-scan TAP (IRLen 5); assuming a single 4-bit
+            # TAP makes every DP transfer fail. Allow the chain to be overridden via an option.
+            irlens_opt = session.Session.get_current().options.get('cmsis_dap.jtag_irlens')
+            devices_irlen = None
+            if irlens_opt:
+                devices_irlen = [int(x) for x in str(irlens_opt).split(',') if x.strip()]
+            self.configure_jtag(devices_irlen)
 
         self._protocol.set_led(DAP_LED.DAP_DEBUGGER_CONNECTED, 1)
         self._protocol.set_led(DAP_LED.DAP_TARGET_RUNNING, 0)

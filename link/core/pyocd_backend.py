@@ -520,6 +520,16 @@ class PyOCDBackend(BackendInterface):
         if looks_jlink:
             probe_type_prefix = "jlink:"
 
+        # CMSIS-DAP + JTAG：STM32/APM32 的 F1/F2/F4 系列在 JTAG 模式下链上有两级 TAP
+        # （CPU TAP IRLen=4 + 边界扫描 BS TAP IRLen=5，总 IR=9）。pyOCD 默认只按单器件 4 位
+        # 配置，DAP_JTAG_Configure 与真实链不符会让 DP 访问全部失败（实机 APM32F407 复现：
+        # "Unexpected ACK 0"）。J-Link 由固件按 jlink.device 自行扫描链，无需该选项。
+        if interface == 'jtag' and not looks_jlink:
+            jtag_target = (target_override or device or '').lower()
+            if jtag_target.startswith(('stm32f1', 'stm32f2', 'stm32f4',
+                                       'apm32f1', 'apm32f2', 'apm32f4')):
+                options['cmsis_dap.jtag_irlens'] = '4,5'
+
         def _do_connect(freq: int, proto: str):
             """实际的连接逻辑，在线程池中执行"""
             opts = dict(options)
