@@ -79,6 +79,8 @@ HIDDEN_IMPORTS = [
     "core.usb_backend",
     "core.usb_pcap",
     "core.usb_decode",
+    "core.usb_topology",
+    "core.usb_winusb",
     # pyserial（serialwin32 为运行时动态导入，需显式声明）
     "serial",
     "serial.tools",

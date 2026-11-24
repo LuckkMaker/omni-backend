@@ -139,6 +139,7 @@ CLI 不订阅 WebSocket（零第三方依赖），所有流式数据都用"后�
 | POST | `/api/usb/hid/write` | `{id, hex|dataB64, report_id?, timeout_ms?}` |
 | POST | `/api/usb/hid/feature/get`、`/feature/set` | Feature 报告读写 |
 | GET | `/api/usb/winusb/devices` | 枚举绑定 WinUSB 的接口（可选 `guid=` 覆盖） |
+| GET | `/api/usb/winusb/all-devices` | 枚举系统 USB 设备；Windows hub IOCTL 可用时附加 `hubIndex`、`captureAddresses`、`usbBus`、`usbDeviceAddress`、`addressSource=hub_ioctl`，无需启动抓包 |
 | POST | `/api/usb/winusb/open` | `{id, path?|vid?/pid?, interface?, timeout_ms?, guids?}` |
 | GET | `/api/usb/winusb/status`、POST `/close` | 会话状态 / 关闭 |
 | POST | `/api/usb/winusb/control` | `{id, request_type, request, value, index, length, hex?}` |
