@@ -206,14 +206,17 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(row["typeLabel"], "urb")
         self.assertEqual(row["summary"], "SYNC_RESET_PIPE_AND_CLEAR_STALL")
 
-    def test_start_requires_elevation(self):
+    def test_start_is_not_blocked_by_elevation(self):
+        # 2026-11-26：USBPcap 1.5.4 在普通用户下也能抓包，后端不再预先按提权拒绝。
+        # 这里只断言"不再因为非管理员而直接失败"。
         if is_elevated():
             self.skipTest("当前进程已是管理员，跳过非提权校验")
         if not find_usbpcap():
             self.skipTest("本机未安装 USBPcap")
         result = self.manager.start(r"\\.\USBPcap1")
-        self.assertFalse(result["success"])
-        self.assertEqual(result["code"], "not_elevated")
+        self.assertNotEqual(result.get("code"), "not_elevated")
+        if result.get("success"):
+            self.manager.stop()
 
     def test_start_rejects_invalid_options(self):
         if not is_windows():

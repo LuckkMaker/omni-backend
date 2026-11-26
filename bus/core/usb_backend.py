@@ -536,15 +536,14 @@ class UsbCaptureManager:
                 "error": "未找到 USBPcapCMD.exe，请先安装 USBPcap",
             }
 
+        # 不再预先拒绝非管理员：实测 USBPcap 1.5.4 在普通用户下也能打开 root hub
+        # 并抓到完整枚举（2026-11-26，Windows 11 26100）。真正的权限错误在
+        # USBPcapCMD 启动后由 stderr 反馈，这里只记录提示。
         if not is_elevated():
-            return {
-                "success": False,
-                "code": "not_elevated",
-                "error": (
-                    "USB 抓包需要管理员权限。请以管理员身份重新打开终端后重试；"
-                    "GUI 下可右键 OMNI Bus 选择“以管理员身份运行”。"
-                ),
-            }
+            self._log(
+                "warning",
+                "USB: 当前进程非管理员；多数机器仍可抓包，若 USBPcap 报拒绝请以管理员重启",
+            )
 
         stale_pid = self._clear_stale_capture()
         if stale_pid is not None:
@@ -835,9 +834,15 @@ class UsbCaptureManager:
 
             if error:
                 hint = self._error_hint(error)
+                low = error.lower()
+                code = (
+                    "not_elevated"
+                    if ("access" in low or "denied" in low or "管理员" in error)
+                    else "capture_process_exited"
+                )
                 self._safe_emit(
                     "usb.capture.error",
-                    {"code": "capture_process_exited", "message": error, "hint": hint},
+                    {"code": code, "message": error, "hint": hint},
                 )
                 self._log("error", f"USB: {error}")
             else:
