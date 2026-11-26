@@ -349,6 +349,18 @@ class PyOCDBackend(BackendInterface):
         给出可执行的提示，不再制造新的僵尸线程。TTL 之后允许重试（此时 DLL 锁
         等待上限会保证重试在有限时间内返回，而不是无限挂起）。
         """
+        # pylink 用 PID 锁文件防重入；Windows 的 PID 复用会让"上次异常退出的锁"
+        # 永久挡住 open()（报 J-Link is already open，拔插探针也无效）。
+        # 每次连接前清一次陈旧锁，真正的持有者（python/omni）不会被误删。
+        try:
+            from core.jlink_lock import clear_stale_pylink_lock
+
+            cleared = clear_stale_pylink_lock(int(probe_uid))
+            if cleared:
+                logger.warning("Cleared stale pylink lock: %s", cleared)
+        except (TypeError, ValueError):
+            pass
+
         now = time.monotonic()
         with self._lock:
             started = self._connect_inflight.get(probe_uid)

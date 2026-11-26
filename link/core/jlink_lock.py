@@ -58,8 +58,56 @@ trampoline，`install_pylink_lock` 会先安装它。详见 :class:`_CallbackHub
 """
 
 import functools
+import os
+import tempfile
 import threading
 import time
+
+def pylink_lock_path(serial_no: int) -> str:
+    """pylink 的设备锁文件路径（它用 PID 文件防止同一探针被两个实例打开）。"""
+    return os.path.join(tempfile.gettempdir(), ".pylink-usb-%d.lck" % int(serial_no))
+
+
+def _pid_looks_like_probe_owner(pid: int) -> bool:
+    """PID 对应的进程是否可能是真正的 J-Link 使用者（python / omni / pyocd）。"""
+    try:
+        import psutil  # pylink 已依赖，这里复用
+    except Exception:  # noqa: BLE001
+        return True  # 判断不了就不要删
+    try:
+        name = psutil.Process(int(pid)).name().lower()
+    except Exception:  # noqa: BLE001
+        return False
+    return any(token in name for token in ("python", "omni", "pyocd", "jlink"))
+
+
+def clear_stale_pylink_lock(serial_no: int) -> str | None:
+    """清掉 pylink 的陈旧 PID 锁文件，返回被清掉的原因（没清则 None）。
+
+    pylink 在 ``%TEMP%\\.pylink-usb-<sn>.lck`` 里写持有者 PID，只判断
+    ``pid_exists()``。Windows 会复用 PID，于是"上次异常退出没删锁 + PID 被无关程序
+    占用"会让之后所有 ``open()`` 都报 ``J-Link is already open``，拔插探针也无效。
+
+    2026-11-26 实测：锁文件停留在 11-20，PID 7364 已被 ``GameViewer.exe`` 复用，
+    导致 ``omni probe connect`` 连续失败两天。
+    """
+    path = pylink_lock_path(serial_no)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            pid = int(handle.read().strip() or "0")
+    except (OSError, ValueError):
+        pid = 0
+    if pid and _pid_looks_like_probe_owner(pid):
+        return None
+    reason = "PID %d 已不是探针持有者（进程复用）" % pid if pid else "锁文件内容非法"
+    try:
+        os.remove(path)
+    except OSError:
+        return None
+    return "%s: %s" % (path, reason)
+
 
 #: 进程内所有 J-Link DLL 调用的串行化锁（可重入，便于嵌套调用）。
 JLINK_DLL_LOCK = threading.RLock()
