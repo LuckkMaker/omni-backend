@@ -1203,6 +1203,89 @@ def get_template(name: str) -> dict[str, Any]:
 
 # ── 自动识别 ──────────────────────────────────────────────
 
+def looks_like_ms_os_20_set(data: bytes) -> bool:
+    """MS OS 2.0 描述符集：首个子描述符是 Set Header（wLength=10，type=0）"""
+    if len(data) < 10:
+        return False
+    w_length, w_type = struct.unpack_from("<HH", data, 0)
+    if w_length != 10 or w_type != 0:
+        return False
+    total = struct.unpack_from("<H", data, 8)[0]
+    return total == len(data)
+
+
+def _msos_ascii(raw: bytes) -> str:
+    return raw.split(b"\x00", 1)[0].decode("ascii", "replace")
+
+
+def _msos_utf16(raw: bytes) -> str:
+    return raw.decode("utf-16-le", "replace").split("\x00", 1)[0]
+
+
+def parse_ms_os_20_set(data: bytes) -> dict[str, Any]:
+    """解析 MS OS 2.0 描述符集（Set/Config/Function/Compatible ID/Registry）"""
+    _w_length, _w_type, win_version, total = struct.unpack_from("<HHIH", data, 0)
+    result: dict[str, Any] = {
+        "windowsVersion": f"0x{win_version:08X}",
+        "totalLength": total,
+        "configSubsets": [],
+        "functionSubsets": [],
+        "compatibleIds": [],
+        "registryProperties": [],
+        "unknown": [],
+    }
+    pos = 10
+    while pos + 4 <= len(data):
+        sub_len, sub_type = struct.unpack_from("<HH", data, pos)
+        if sub_len < 4 or pos + sub_len > len(data):
+            break
+        body = data[pos : pos + sub_len]
+        if sub_type == 0x01 and sub_len >= 8:
+            result["configSubsets"].append(
+                {
+                    "bConfigurationValue": body[4],
+                    "totalLength": struct.unpack_from("<H", body, 6)[0],
+                }
+            )
+        elif sub_type == 0x02 and sub_len >= 8:
+            result["functionSubsets"].append(
+                {
+                    "bFirstInterface": body[4],
+                    "subsetLength": struct.unpack_from("<H", body, 6)[0],
+                }
+            )
+        elif sub_type == 0x03 and sub_len >= 20:
+            result["compatibleIds"].append(
+                {
+                    "compatibleId": _msos_ascii(body[4:12]),
+                    "subCompatibleId": _msos_ascii(body[12:20]),
+                }
+            )
+        elif sub_type == 0x04 and sub_len >= 10:
+            prop_type, name_len = struct.unpack_from("<HH", body, 4)
+            name_end = 8 + name_len
+            name = _msos_utf16(body[8:name_end]) if name_end <= sub_len else ""
+            data_len = (
+                struct.unpack_from("<H", body, name_end)[0]
+                if name_end + 2 <= sub_len
+                else 0
+            )
+            payload = body[name_end + 2 : name_end + 2 + data_len]
+            if prop_type in (0x01, 0x02, 0x07):
+                value: Any = _msos_utf16(payload)
+            elif prop_type == 0x04 and len(payload) >= 4:
+                value = struct.unpack_from("<I", payload, 0)[0]
+            else:
+                value = hex_string(payload)
+            result["registryProperties"].append(
+                {"dataType": prop_type, "name": name, "value": value}
+            )
+        else:
+            result["unknown"].append({"type": sub_type, "hex": hex_string(body)})
+        pos += sub_len
+    return result
+
+
 def detect(data: bytes) -> dict[str, Any]:
     """识别一段原始字节是什么，并返回解析结果。
 
@@ -1246,6 +1329,8 @@ def detect(data: bytes) -> dict[str, Any]:
             "length": length,
             "document": to_document(bos=bos),
         }
+    if looks_like_ms_os_20_set(data):
+        return {"kind": "msos20", "length": length, "msos20": parse_ms_os_20_set(data)}
     if length == 8 and (data[0] & 0x60) != 0x60:
         return {"kind": "setup", "length": length}
     return {"kind": "raw", "length": length, "hex": hex_string(data)}

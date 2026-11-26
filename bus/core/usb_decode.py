@@ -118,6 +118,26 @@ CDC_REQUESTS = {
     0x23: "SEND_BREAK",
 }
 
+#: CDC NCM（subclass 0x0D）的类请求：NTB 参数协商 + 以太网过滤
+NCM_REQUESTS = {
+    0x40: "SET_ETHERNET_MULTICAST_FILTERS",
+    0x41: "SET_ETHERNET_PM_PATTERN_FILTER",
+    0x42: "GET_ETHERNET_PM_PATTERN_FILTER",
+    0x43: "SET_ETHERNET_PACKET_FILTER",
+    0x44: "GET_ETHERNET_STATISTIC",
+    0x80: "GET_NTB_PARAMETERS",
+    0x81: "GET_NET_ADDRESS",
+    0x82: "SET_NET_ADDRESS",
+    0x83: "GET_NTB_FORMAT",
+    0x84: "SET_NTB_FORMAT",
+    0x85: "GET_NTB_INPUT_SIZE",
+    0x86: "SET_NTB_INPUT_SIZE",
+    0x87: "GET_MAX_DATAGRAM_SIZE",
+    0x88: "SET_MAX_DATAGRAM_SIZE",
+    0x89: "GET_CRC_MODE",
+    0x8A: "SET_CRC_MODE",
+}
+
 #: RNDIS（interface class 0xEF/0x04）的控制请求，码值与 CDC 一致
 RNDIS_REQUESTS = {
     0x00: "SEND_ENCAPSULATED_COMMAND",
@@ -298,6 +318,8 @@ def class_hint_for(cls: int, subcls: int = 0) -> str | None:
     """把 bDeviceClass/bInterfaceClass 转成前端用的短标签"""
     if cls == 0xEF and subcls == 0x04:
         return "rndis"
+    if cls == 0x02 and subcls == 0x0D:
+        return "ncm"
     if cls == 0x02:
         return "cdc"
     if cls == 0x03:
@@ -387,6 +409,12 @@ def decode_setup(setup: bytes, class_hint: str | None = None) -> dict:
         decoded["target"] = w_index
     elif req_type == "class" and class_hint == "cdc":
         _decode_cdc_setup_fields(request, w_value, w_index, w_length, decoded)
+    elif req_type == "class" and class_hint == "ncm":
+        decoded["interface"] = w_index
+        if request in (0x84, 0x8A):
+            decoded["value"] = w_value
+        elif request in (0x86, 0x88):
+            decoded["dataLength"] = w_length
     elif req_type == "class" and class_hint == "hid":
         _decode_hid_setup_fields(request, w_value, w_index, w_length, decoded)
     elif req_type == "class" and class_hint == "msc":
@@ -431,6 +459,7 @@ def _request_name(req_type: str, request: int, class_hint: str | None) -> str:
             "dfu": DFU_REQUESTS,
             "hub": HUB_REQUESTS,
             "rndis": RNDIS_REQUESTS,
+            "ncm": NCM_REQUESTS,
         }.get(class_hint or "", {})
         return table.get(request, f"CLASS_0x{request:02X}")
     if req_type == "vendor":
