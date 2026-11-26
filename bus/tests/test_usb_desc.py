@@ -264,3 +264,33 @@ class ValidateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NcmNtbDecodeTest(unittest.TestCase):
+    """抓包摘要用：NTB16 头/NDP 的最小解析"""
+
+    def _ntb(self):
+        import struct
+
+        ntb = bytearray(128)
+        ntb[0:4] = b"NCMH"
+        struct.pack_into("<HHHH", ntb, 4, 12, 7, 128, 12)  # header len, seq, block, ndp idx
+        ntb[12:16] = b"NCM0"
+        struct.pack_into("<HH", ntb, 16, 16, 0)  # ndp len, next ndp
+        struct.pack_into("<HH", ntb, 20, 28, 100)  # DPE
+        struct.pack_into("<HH", ntb, 24, 0, 0)  # Null
+        return bytes(ntb)
+
+    def test_decode_valid(self):
+        from bus.core.usb_decode import decode_ncm_ntb
+
+        ntb = decode_ncm_ntb(self._ntb())
+        self.assertIsNotNone(ntb)
+        self.assertEqual(ntb["sequence"], 7)
+        self.assertEqual(ntb["blockLength"], 128)
+        self.assertEqual(ntb["datagrams"], [(28, 100)])
+
+    def test_rejects_non_ntb(self):
+        from bus.core.usb_decode import decode_ncm_ntb
+
+        self.assertIsNone(decode_ncm_ntb(b"\x00" * 64))

@@ -237,10 +237,11 @@ class TransferRecord:
     records: tuple[RecordRef, ...]
     preview: bytes = b""
 
-    def to_row(self) -> dict[str, Any]:
+    def to_row(self, delta_us: int | None = None) -> dict[str, Any]:
         return {
             "id": self.id,
             "ts": self.ts,
+            "deltaUs": delta_us,
             "durationUs": self.duration_us,
             "bus": self.bus,
             "device": self.device,
@@ -1165,6 +1166,18 @@ class UsbCaptureManager:
         matched = [row for row in rows if self._matches(row, filters)]
         total = len(matched)
 
+        # 「与上一阶段的间隔」：上一笔结束 → 本笔开始的空档（µs）。
+        # pcap 时间戳只有微秒精度，所以最小可分辨单位就是 1 µs。
+        deltas: dict[int, int | None] = {}
+        prev = None
+        for row in matched:
+            if prev is None:
+                deltas[row.id] = None
+            else:
+                gap = (row.ts - (prev.ts + prev.duration_us / 1_000_000.0)) * 1_000_000.0
+                deltas[row.id] = max(0, int(round(gap)))
+            prev = row
+
         if before_id is not None:
             candidates = [row for row in matched if row.id < before_id]
             page = candidates[-limit:]
@@ -1175,7 +1188,7 @@ class UsbCaptureManager:
 
         return {
             "total": total,
-            "items": [row.to_row() for row in page],
+            "items": [row.to_row(deltas.get(row.id)) for row in page],
             # 游标：CLI 的 --follow 用 nextId 作为下一次的 afterId；oldestId
             # 用于提示「请求的游标已被环形缓存覆盖」。
             "oldestId": rows[0].id if rows else None,
@@ -1197,11 +1210,19 @@ class UsbCaptureManager:
             return False
         if filters.get("endpoint") is not None and row.endpoint != int(filters["endpoint"]):
             return False
-        status_filter = filters.get("status")
-        if status_filter == "ok" and row.status != 0:
-            return False
-        if status_filter == "error" and row.status == 0:
-            return False
+        status_filter = str(filters.get("status") or "").strip().lower()
+        if status_filter:
+            if status_filter == "ok":
+                if row.status != 0:
+                    return False
+            elif status_filter == "error":
+                if row.status == 0:
+                    return False
+            else:
+                # 也接受具体状态名（success / stall / canceled / babble…），
+                # 否则像 --status CANCELED 这种写法会被静默忽略、返回全部
+                if status_filter not in status_name(row.status).lower():
+                    return False
         min_length = filters.get("minLength")
         if min_length is not None and row.length < int(min_length):
             return False

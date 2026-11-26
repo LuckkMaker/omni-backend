@@ -819,6 +819,44 @@ def decode_cdc_payload(request: int, direction: str, data: bytes) -> dict | None
 
 # ── 传输摘要 ──────────────────────────────────────────────
 
+def decode_ncm_ntb(data: bytes) -> dict | None:
+    """解析 CDC NCM 的 NTB16 头（NTH16/NDP16），用于抓包摘要。
+
+    只做"够看"的解析：签名、序列号、块长、NDP 位置与前几个 DPE。
+    ``data`` 可能被 snaplen 截断，越界的 DPE 直接停（不报错）。
+    """
+    if len(data) < 16 or data[0:4] != b"NCMH":
+        return None
+    header_len = struct.unpack_from("<H", data, 4)[0]
+    seq = struct.unpack_from("<H", data, 6)[0]
+    block_len = struct.unpack_from("<H", data, 8)[0]
+    ndp_index = struct.unpack_from("<H", data, 10)[0]
+    if header_len < 12 or ndp_index + 8 > len(data) or data[ndp_index : ndp_index + 4] != b"NCM0":
+        return None
+    ndp_len = struct.unpack_from("<H", data, ndp_index + 4)[0]
+    next_ndp = struct.unpack_from("<H", data, ndp_index + 6)[0]
+    dgrams: list[tuple[int, int]] = []
+    pos = ndp_index + 8
+    limit = min(len(data), ndp_index + max(ndp_len, 8))
+    while pos + 4 <= limit:
+        index, dlen = struct.unpack_from("<HH", data, pos)
+        pos += 4
+        if index == 0 or dlen == 0:  # Null entry
+            break
+        if index + dlen > len(data):
+            dgrams.append((index, dlen))
+            break
+        dgrams.append((index, dlen))
+    return {
+        "headerLength": header_len,
+        "sequence": seq,
+        "blockLength": block_len,
+        "ndpIndex": ndp_index,
+        "nextNdpIndex": next_ndp,
+        "datagrams": dgrams,
+    }
+
+
 def summarize_transfer(
     transfer_type: int,
     direction: str,
@@ -846,6 +884,17 @@ def summarize_transfer(
         return (
             f"MSC CSW {msc['statusName']} residue={msc['residue']}B"
         )
+
+    # 不依赖 class_hint：NCM 数据经 bulk 传输，签名自证（"NCMH"），
+    # 而 collector 对数据接口 alt 1 的端点不一定能给出 ncm 提示
+    if transfer_type == 3 and data[:4] == b"NCMH":
+        ntb = decode_ncm_ntb(data)
+        if ntb is not None:
+            spans = ",".join(f"{index}+{dlen}" for index, dlen in ntb["datagrams"]) or "-"
+            return (
+                f"NTB16 seq={ntb['sequence']} blk={ntb['blockLength']} "
+                f"dgrams={len(ntb['datagrams'])} [{spans}]"
+            )
 
     type_label = TRANSFER_TYPE_LABELS.get(transfer_type, "unknown")
     if transfer_type == 0:
